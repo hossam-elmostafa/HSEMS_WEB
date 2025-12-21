@@ -1,0 +1,12 @@
+{
+  "name": "hse",
+  "version": "1.0.1",
+  "description": "HSE client package with button click logging",
+  "main": "hse.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "a.ali",
+  "license": "ISC"
+}
+
