@@ -6,7 +6,7 @@
 import { toast } from "react-toastify";
 
 // Import event handlers
-import { toolBarButtonClicked, ButtonClicked } from './src/events/buttonEvents';
+import { toolBarButtonClicked, ButtonClicked, setDevInterface } from './src/events/buttonEvents';
 import { OnBeforeBrowseButtonClick, UpdateAfterBrowse } from './src/events/browseEvents';
 import { SubFieldChanged, MainSubReposition, ShowScreen } from './src/events/screenEvents';
 import { beforeRenderAppMenu, beforeRenderCustomActions, onMenuItemClicked, onAppOpen } from './src/events/menuEvents';
@@ -99,6 +99,9 @@ export default function useHSE(useDevInterfaceFun) {
   devInterfaceObj.TabEnable = TabEnable;
   devInterfaceObj.openAdvancedFilter = openAdvancedFilter;
   devInterfaceObj.changeCustomButtonProperty = changeCustomButtonProperty;
+
+  // Set devInterface for ButtonClicked handler
+  setDevInterface(devInterfaceObj);
 
   // Return all event handlers and devInterfaceObj
   return {

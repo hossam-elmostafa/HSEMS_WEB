@@ -1,5 +1,16 @@
 import { sendButtonClickToBackend } from '../services/ObservationService';
 
+// Module-level variable to store devInterface functions
+let devInterfaceObj = {};
+
+/**
+ * Set devInterface functions for ButtonClicked handler
+ * @param {Object} devInterface - Object containing devInterface functions
+ */
+export function setDevInterface(devInterface) {
+  devInterfaceObj = devInterface || {};
+}
+
 /**
  * toolBarButtonClicked
  * @param {Object} eventObj 
@@ -66,9 +77,8 @@ export function ButtonClicked(eventObj) {
     if (Button_Name) {
       normalizedButtonName = Button_Name.toString().toUpperCase();
       
-      // Only log to backend for Observation module screens
-      // Pass screen tag to check if it's an observation screen
-      sendButtonClickToBackend(normalizedButtonName, strScrTag);
+      // Handle Observation module buttons with devInterface access
+      sendButtonClickToBackend(normalizedButtonName, strScrTag, eventObj, devInterfaceObj);
     }
 
     // Any additional button-specific logic can go here

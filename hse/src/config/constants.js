@@ -10,7 +10,8 @@ export const WEB_HSE_API_URL = process.env.REACT_APP_WEB_HSE_API || 'http://loca
 export const OBSERVATION_SCREEN_TAGS = [
 //   'HSE_TGNrMisTypes',        // Observation Type
 //   'HSE_TgObsrvtnTrgts',      // Observation Targets
-//   'HSE_TgNrstMiscEnt',       // Observation Entry
+  'HSE_TGNRSTMISCENT',       // Observation Entry (Near Miss Entry)
+  'HSE_TgNrstMiscEnt',        // Observation Entry (alternative tag format)
   'HSE_TgNrstMisccnfrmtn',   // Observation Review
 //   'HSE_TgNrstMiscflwup',     // Observation Approval
 //   'HSE_TgNrMisRward',        // Observation Reward
