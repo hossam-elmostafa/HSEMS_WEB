@@ -8,14 +8,14 @@ export const WEB_HSE_API_URL = process.env.REACT_APP_WEB_HSE_API || 'http://loca
 
 // Observation screen tags - screens that belong to the Observation module
 export const OBSERVATION_SCREEN_TAGS = [
-//   'HSE_TGNrMisTypes',        // Observation Type
-//   'HSE_TgObsrvtnTrgts',      // Observation Targets
+   'HSE_TGNrMisTypes',        // Observation Type
+  'HSE_TgObsrvtnTrgts',      // Observation Targets
   'HSE_TGNRSTMISCENT',       // Observation Entry (Near Miss Entry)
   'HSE_TgNrstMiscEnt',        // Observation Entry (alternative tag format)
   'HSE_TgNrstMisccnfrmtn',   // Observation Review
-//   'HSE_TgNrstMiscflwup',     // Observation Approval
-//   'HSE_TgNrMisRward',        // Observation Reward
-//   'HSE_TgNrstMiscInq',       // Observation Inquiry
+   'HSE_TgNrstMiscflwup',     // Observation Approval
+   'HSE_TgNrMisRward',        // Observation Reward
+   'HSE_TgNrstMiscInq',       // Observation Inquiry
 ];
 
 // Messages object for internationalization (placeholder)

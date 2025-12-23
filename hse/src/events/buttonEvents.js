@@ -26,10 +26,16 @@ export function setDevInterface(devInterface) {
  * 
  * This event MUST call callBackFn after finish it's work
  */
+// Note: Pending reject observation is now managed in ObservationService.js
+// This keeps buttonEvents.js as a general dispatcher without business logic
+
 export function toolBarButtonClicked(eventObj, callBackFn) {
   let { fullRecord, isNewMode, strBtnName, strScrTag, strTabTag, complete } = eventObj;
   strScrTag = strScrTag.toUpperCase();
   strBtnName = strBtnName.toUpperCase();
+  
+  // This is a generalized event handler - no business logic here
+  // All business logic is handled in ObservationService.js via ButtonClicked event
   callBackFn(eventObj);
 }
 
@@ -78,6 +84,7 @@ export function ButtonClicked(eventObj) {
       normalizedButtonName = Button_Name.toString().toUpperCase();
       
       // Handle Observation module buttons with devInterface access
+      // This is a generalized handler - business logic is in ObservationService.js
       sendButtonClickToBackend(normalizedButtonName, strScrTag, eventObj, devInterfaceObj);
     }
 
