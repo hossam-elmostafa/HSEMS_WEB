@@ -15,7 +15,7 @@ export function isObservationScreen(screenTag) {
 
 /**
  * Send button click event to Web_HSE backend
- * Handles Reject, Confirm, Cancel, and Entry Complete buttons on Observation module screens
+ * Handles Reject, View Reject Reason, Confirm, Cancel, and Entry Complete buttons on Observation module screens
  * @param {string} buttonName - The button name/ID to log
  * @param {string} screenTag - The screen tag to check if it's an observation screen
  * @param {Object} eventObj - The full event object containing fullRecord, strScrTag, etc.
@@ -44,16 +44,18 @@ export function sendButtonClickToBackend(buttonName, screenTag, eventObj = {}, d
   const normalizedButton = buttonName ? buttonName.toString().toUpperCase() : '';
   const normalizedScreenTag = screenTag ? screenTag.toString().toUpperCase() : '';
   
-  // C++: CRejectReason::DisplayCustomButtonClicked - handles RJCTRSN_BTN_OK
-  // Handle reject reason screen OK button (this is part of observation module flow)
-  if (normalizedScreenTag === 'HSE_TGRJCTRSN' && normalizedButton === 'RJCTRSN_BTN_OK') {
+    // C++: CRejectReason::DisplayCustomButtonClicked - handles RJCTRSN_BTN_OK
+    // Handle reject reason screen OK button (this is part of observation module flow)
+    // Check both possible screen tag casings: HSE_TGRJCTRSN (uppercase) or HSE_TGRJCTRSN (mixed case from config)
+    if ((normalizedScreenTag === 'HSE_TGRJCTRSN' || normalizedScreenTag === 'HSE_TGRJCTRSN') && normalizedButton === 'RJCTRSN_BTN_OK') {
     console.log('[Web_HSE] ✓ Reject reason screen OK button (RJCTRSN_BTN_OK) clicked!');
     handleRejectReasonOkButton(devInterface);
     return; // Don't process further
   }
   
-  // C++: CRejectReason::DisplayCustomButtonClicked - handles RJCTRSN_BTN_CANCEL
-  if (normalizedScreenTag === 'HSE_TGRJCTRSN' && normalizedButton === 'RJCTRSN_BTN_CANCEL') {
+    // C++: CRejectReason::DisplayCustomButtonClicked - handles RJCTRSN_BTN_CANCEL
+    // Check both possible screen tag casings: HSE_TGRJCTRSN (uppercase) or HSE_TGRJCTRSN (mixed case)
+    if ((normalizedScreenTag === 'HSE_TGRJCTRSN' || normalizedScreenTag === 'HSE_TGRJCTRSN') && normalizedButton === 'RJCTRSN_BTN_CANCEL') {
     console.log('[Web_HSE] Reject reason screen Cancel button clicked. Clearing pending rejection.');
     clearPendingRejectObservation();
     return; // Don't process further
@@ -65,13 +67,18 @@ export function sendButtonClickToBackend(buttonName, screenTag, eventObj = {}, d
     return;
   }
   
-  // Handle buttons: Reject, Confirm, Cancel, Entry Complete
+  // Handle buttons: View Reject Reason, Reject, Confirm, Cancel, Entry Complete
   // Button names follow pattern:
+  // - *_VWRJCTRSNS (View Reject Reasons on tracing tab)
   // - NRSTMISCENT_RJC (Reject)
   // - NRSTMISCENT_ACP (Confirm/Accept)
   // - NRSTMISCENT_CNCL (Cancel)
   // - NRSTMISCENT_ENTCMPLT (Entry Complete)
-  if (normalizedButton.includes('_RJC') || normalizedButton.endsWith('_RJC')) {
+  if (normalizedButton.endsWith('_VWRJCTRSNS')) {
+    // RQ_HSM_22_12_11_10: Handle View Reject Reason Custom Button
+    // ClickUp Task: https://app.clickup.com/t/86c76vt58
+    handleViewRejectReasonButton(buttonName, screenTag, eventObj, devInterface);
+  } else if (normalizedButton.includes('_RJC') || normalizedButton.endsWith('_RJC')) {
     // RQ_HSM_22_12_10_50: Handle Reject button (button name contains or ends with _RJC)
     // ClickUp Task: https://app.clickup.com/t/86c76v8yr
     handleRejectButton(buttonName, screenTag, eventObj, devInterface);
@@ -88,8 +95,86 @@ export function sendButtonClickToBackend(buttonName, screenTag, eventObj = {}, d
   }
 }
 
+/**
+ * Handle View Reject Reason custom button click on Observation tracing tab
+ * RQ_HSM_22_12_11_10: Handle View Reject Reason Custom Button
+ * ClickUp Task: https://app.clickup.com/t/86c76vt58
+ * Mirrors C++: CHSEMSCommonCategory::viewRejectReason for buttons ending with _VWRJCTRSNS
+ * - Opens HSE_TGRJCTRSN in (effectively) locked mode to show existing reject reasons
+ * @param {string} buttonName - The button name (e.g. NRSTMISCENTTRC_VWRJCTRSNS)
+ * @param {string} screenTag - The screen tag (owner screen)
+ * @param {Object} eventObj - The full event object
+ * @param {Object} devInterface - Object containing devInterface functions
+ */
+async function handleViewRejectReasonButton(buttonName, screenTag, eventObj, devInterface) {
+  try {
+    const { FormGetField, openScr } = devInterface;
 
+    if (!openScr) {
+      console.error('[Web_HSE] Missing required devInterface functions for View Reject Reason button');
+      toast.error('System error: Required functions not available');
+      return;
+    }
 
+    const rawBtnName = buttonName ? buttonName.toString() : '';
+    if (!rawBtnName.toUpperCase().endsWith('_VWRJCTRSNS')) {
+      console.warn('[Web_HSE] View Reject Reason handler called for non _VWRJCTRSNS button:', rawBtnName);
+      return;
+    }
+
+    // Derive table and field names from button name
+    // C++:
+    //   strTableName = "HSE_" + (BtnName without "_VWRJCTRSNS")
+    //   strActionType = <base> + "_ACCDESC"
+    //   strFieldName  = <base> + "_MAINLNK"
+    //   strLinkField  = <base> + "_LNK"
+    const baseName = rawBtnName.replace(/_VWRJCTRSNS$/i, '');
+
+    // Prefer values from the selected tracing row (fullRecord) instead of FormGetField,
+    // because tracing tab fields are part of a sub-grid.
+    const { fullRecord: fullRecordArr } = eventObj || {};
+    const firstRecord = Array.isArray(fullRecordArr)
+      ? fullRecordArr[0]
+      : fullRecordArr || {};
+
+    let linkValue =
+      firstRecord?.NRSTMISCENTTRC_LNK ??
+      firstRecord?.NRSTMISCENTTRC_LNK?.toString?.() ??
+      '';
+
+    // Normalize link value to string to safely use replace()
+    if (linkValue !== null && linkValue !== undefined) {
+      linkValue = String(linkValue);
+    }
+
+    if (!linkValue) {
+      toast.warning('Unable to find linked Observation number for reject reasons.');
+      return;
+    }
+
+    // For Observation module the base module name is NRSTMISCENT
+    // C++: strModulefrmSource is used in "RJCTRSN_MODULETYPE like '<src>%'" (to match L1/L2)
+    const moduleSource = 'NRSTMISCENT';
+
+    // Use plain WHERE clause for list screen criteria (server builds full SELECT)
+    // Remove any extra whitespace/newlines to ensure clean SQL
+    const criteria = `WHERE RJCTRSN_LINKWITHMAIN = '${linkValue.replace(/'/g, "''")}' AND RJCTRSN_MODULETYPE LIKE '${moduleSource.replace(/'/g, "''")}%'`.trim();
+
+    console.log('[Web_HSE] Opening View Reject Reason screen with criteria:', criteria);
+    console.log('[Web_HSE] Screen tag:', 'HSE_TGRjctRsn', 'Link value:', linkValue);
+
+    // Open reject reason screen in read-only/locked mode
+    // C++: setgbOpenRejectScreenLocked(true) then ShowScreen(..., true) for locked
+    // Use correct screen tag from config: HSE_TGRjctRsn (not HSE_TGRJCTRSN)
+    // Use 'list' mode with bLockScr=true (8th parameter) to make it read-only
+    // Pass empty string for criteria to let server handle it, or pass as WHERE clause
+    const rejectReasonScreenTag = 'HSE_TGRjctRsn'; // Match the exact tag from header.json
+    openScr(rejectReasonScreenTag, {}, criteria, 'list', false, {}, false, true);
+  } catch (error) {
+    console.error('[Web_HSE] Error in handleViewRejectReasonButton:', error);
+    toast.error('An error occurred while opening reject reasons.');
+  }
+}
 
 /**
  * Handle Reject button click
@@ -170,7 +255,7 @@ async function handleRejectButton(buttonName, screenTag, eventObj, devInterface)
     // C++: ShowRejectreason() opens the reject reason screen
     // Use openScr with the reject reason screen tag and default values
     // The screen will handle the dialog/prompt internally
-    const rejectReasonScreenTag = 'HSE_TGRJCTRSN';
+    const rejectReasonScreenTag = 'HSE_TGRjctRsn';
     const criteria = `SELECT * FROM HSE_RJCTRSN WHERE (RJCTRSN_LINKWITHMAIN='${keyFieldValue.replace(/'/g, "''")}') AND (RJCTRSN_MODULETYPE='${moduleType}') AND (ISNULL(RJCTRSN_TRACINGLNK, 0) = 0)`;
     
     // Set default values for the reject reason screen
@@ -212,7 +297,7 @@ async function handleRejectButton(buttonName, screenTag, eventObj, devInterface)
     });
 
     // Open the reject reason screen - it has its own built-in dialog
-    // C++: ShowRejectreason(strCriteria) -> opens HSE_TGRJCTRSN screen
+    // C++: ShowRejectreason(strCriteria) -> opens HSE_TGRjctRsn screen
     console.log('[Web_HSE] Opening reject reason screen:', {
       screenTag: rejectReasonScreenTag,
       observationNumber: keyFieldValue,
