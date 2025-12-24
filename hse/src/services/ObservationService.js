@@ -89,6 +89,10 @@ export function sendButtonClickToBackend(buttonName, screenTag, eventObj = {}, d
     // RQ_HSM_22_12_10_48: Handle Confirm/Accept button
     // ClickUp Task: https://app.clickup.com/t/86c76v5ze
     handleConfirmButton(buttonName, screenTag, eventObj, devInterface);
+  } else if (normalizedButton === 'NRSTMISCENT_CNCL' || normalizedButton.endsWith('_CNCL')) {
+    // RQ_HSM_22_12_10_55: Handle Cancel Custom Button
+    // ClickUp Task: https://app.clickup.com/t/86c76v9yr
+    handleCancelButton(buttonName, screenTag, eventObj, devInterface);
   } else {
     // Other buttons are not handled
     console.log('[Web_HSE Debug] Button not handled. Button name:', normalizedButton);
@@ -443,6 +447,122 @@ async function handleConfirmButton(buttonName, screenTag, eventObj, devInterface
   }
 }
 
+/**
+ * Handle Cancel button click
+ * RQ_HSM_22_12_10_55: Handle Cancel Custom Button
+ * ClickUp Task: https://app.clickup.com/t/86c76v9yr
+ * Implements the logic from NearMissCategory::DisplayCustomButtonClicked for NRSTMISCENT_CNCL
+ * @param {string} buttonName - The button name
+ * @param {string} screenTag - The screen tag
+ * @param {Object} eventObj - The full event object
+ * @param {Object} devInterface - Object containing devInterface functions
+ */
+async function handleCancelButton(buttonName, screenTag, eventObj, devInterface) {
+  try {
+    const {
+      FormGetField,
+      FormSetField,
+      executeSQL,
+      executeSQLPromise,
+      getUserName,
+      refreshData,
+      AskYesNoMessage,
+      doToolbarAction,
+    } = devInterface;
+
+    // Validate required functions
+    if (
+      !FormGetField ||
+      !FormSetField ||
+      (!executeSQL && !executeSQLPromise) ||
+      !getUserName ||
+      !refreshData ||
+      !AskYesNoMessage ||
+      !doToolbarAction
+    ) {
+      console.error('[Web_HSE] Missing required devInterface functions for Cancel button');
+      toast.error('System error: Required functions not available');
+      return;
+    }
+
+    const executeSQLAsync = executeSQLPromise || executeSQL;
+    const formTag = screenTag || 'HSE_TGNRSTMISCCNFRMTN';
+
+    // C++: Check if status is already 99 (cancelled)
+    const currentStatus = FormGetField(formTag, 'NRSTMISCENT_RECSTS') || '';
+    if (currentStatus === '99') {
+      toast.info('Record is already cancelled');
+      return;
+    }
+
+    // C++: MessageBox(NULL,"Are you sure to cancel the observation - (Yes/No)?","Prompt",MB_YESNO | MB_ICONEXCLAMATION |MB_TASKMODAL);
+    const confirmed = await AskYesNoMessage(
+      'Prompt',
+      'Are you sure to cancel the observation - (Yes/No)?'
+    );
+
+    if (!confirmed) {
+      // User clicked No, ignore the action
+      return;
+    }
+
+    // C++: FormSetField(strForm_Tag,"NRSTMISCENT_RECSTS","99");
+    FormSetField(formTag, 'NRSTMISCENT_RECSTS', '99');
+
+    // Get observation number
+    // C++: FormGetField(strForm_Tag,"NrstMiscEnt_NrstMiscNum")
+    let linkFieldVal =
+      FormGetField(formTag, 'NrstMiscEnt_NrstMiscNum') ||
+      FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM') ||
+      '';
+
+    if (!linkFieldVal) {
+      toast.warning('Unable to find Observation number. Please save the record first.');
+      return;
+    }
+
+    // Get screen name based on form tag
+    // C++:
+    //   if (strForm_Tag=="HSE_TGNRSTMISCCNFRMTN") strScreenName="Observation Review";
+    //   else if (strForm_Tag=="HSE_TGNRSTMISCFLWUP") strScreenName="Observation Approval";
+    let screenName = '';
+    const normalizedFormTag = formTag.toUpperCase();
+    if (normalizedFormTag === 'HSE_TGNRSTMISCCNFRMTN' || normalizedFormTag.includes('CNFRMTN')) {
+      screenName = 'Observation Review';
+    } else if (normalizedFormTag === 'HSE_TGNRSTMISCFLWUP' || normalizedFormTag.includes('FLWUP')) {
+      screenName = 'Observation Approval';
+    } else {
+      screenName = 'Observation Entry'; // Default fallback
+    }
+
+    // Get user name
+    const userName = getUserName() || '';
+
+    // C++: Insert tracing record
+    // INSERT INTO HSE_NRSTMISCENTTRC (NRSTMISCENTTRC_DATTIM,NRSTMISCENTTRC_ACCDESC,NRSTMISCENTTRC_LNK,NRSTMISCENTTRC_ENTUSR,SRCSCRN)
+    // VALUES (getdate(),'Canceled',<link>,<user>,'<screen>')
+    const insertTracingSql = `INSERT INTO HSE_NRSTMISCENTTRC (NRSTMISCENTTRC_DATTIM,NRSTMISCENTTRC_ACCDESC,NRSTMISCENTTRC_LNK,NRSTMISCENTTRC_ENTUSR,SRCSCRN) VALUES (getdate(),'Canceled',${linkFieldVal},'${userName.replace(/'/g, "''")}','${screenName.replace(/'/g, "''")}')`;
+
+    try {
+      await executeSQLAsync(insertTracingSql);
+      console.log('[Web_HSE] ✓ Tracing record inserted for cancelled observation');
+
+      // C++: DoToolBarAction(TOOLBAR_SAVE,strForm_Tag,"");
+      doToolbarAction('SAVE', formTag, '');
+
+      // C++: RefreshScreen("",REFRESH_SELECTED);
+      refreshData('', 'REFRESH_SELECTED');
+
+      toast.success('Observation cancelled successfully');
+    } catch (error) {
+      console.error('[Web_HSE] Error cancelling observation:', error);
+      toast.error('Error cancelling observation. Please try again.');
+    }
+  } catch (error) {
+    console.error('[Web_HSE] Error in handleCancelButton:', error);
+    toast.error('An error occurred while processing the Cancel action');
+  }
+}
 
 /**
  * Handle Entry Complete button click
