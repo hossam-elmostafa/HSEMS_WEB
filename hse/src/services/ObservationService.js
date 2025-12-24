@@ -488,9 +488,48 @@ async function handleCancelButton(buttonName, screenTag, eventObj, devInterface)
     const executeSQLAsync = executeSQLPromise || executeSQL;
     const formTag = screenTag || 'HSE_TGNRSTMISCCNFRMTN';
 
+    // Get key field value and status from event object first (more reliable)
+    const { fullRecord: fullRecordArr, fullRecordArrKeys } = eventObj || {};
+    let keyFieldValue = '';
+    let currentStatus = '';
+
+    // Try to get values from event object first
+    if (fullRecordArrKeys && fullRecordArrKeys.length > 0) {
+      keyFieldValue = fullRecordArrKeys[0].toString();
+    } else if (fullRecordArr && fullRecordArr.length > 0) {
+      const firstRecord = Array.isArray(fullRecordArr) ? fullRecordArr[0] : fullRecordArr;
+      keyFieldValue =
+        firstRecord?.NRSTMISCENT_NRSTMISCNUM ||
+        firstRecord?.NRSTMISCNUM ||
+        firstRecord?.NrstMiscEnt_NrstMiscNum ||
+        '';
+      currentStatus =
+        firstRecord?.NRSTMISCENT_RECSTS ||
+        firstRecord?.RECSTS ||
+        '';
+    }
+
+    // Fallback: read from form if still empty
+    if (!currentStatus) {
+      // Try view name first (most reliable), then form tag
+      // Wrap in try-catch to handle cases where form/view doesn't exist
+      try {
+        currentStatus = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_RECSTS') || '';
+      } catch (e) {
+        // Ignore error, try next option
+      }
+      if (!currentStatus) {
+        try {
+          currentStatus = FormGetField(formTag, 'NRSTMISCENT_RECSTS') || '';
+        } catch (e) {
+          // Ignore error, use empty string
+        }
+      }
+    }
+
     // C++: Check if status is already 99 (cancelled)
-    const currentStatus = FormGetField(formTag, 'NRSTMISCENT_RECSTS') || '';
-    if (currentStatus === '99') {
+    // Only check if we successfully retrieved the status
+    if (currentStatus && (currentStatus === '99' || currentStatus === 99)) {
       toast.info('Record is already cancelled');
       return;
     }
@@ -509,12 +548,32 @@ async function handleCancelButton(buttonName, screenTag, eventObj, devInterface)
     // C++: FormSetField(strForm_Tag,"NRSTMISCENT_RECSTS","99");
     FormSetField(formTag, 'NRSTMISCENT_RECSTS', '99');
 
-    // Get observation number
+    // Get observation number (use value from event if we already have it)
     // C++: FormGetField(strForm_Tag,"NrstMiscEnt_NrstMiscNum")
-    let linkFieldVal =
-      FormGetField(formTag, 'NrstMiscEnt_NrstMiscNum') ||
-      FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM') ||
-      '';
+    if (!keyFieldValue) {
+      // Wrap in try-catch to handle cases where form/view doesn't exist
+      try {
+        keyFieldValue = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM') || '';
+      } catch (e) {
+        // Ignore error, try next option
+      }
+      if (!keyFieldValue) {
+        try {
+          keyFieldValue = FormGetField(formTag, 'NrstMiscEnt_NrstMiscNum') || '';
+        } catch (e) {
+          // Ignore error, try next option
+        }
+      }
+      if (!keyFieldValue) {
+        try {
+          keyFieldValue = FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM') || '';
+        } catch (e) {
+          // Ignore error, use empty string
+        }
+      }
+    }
+
+    const linkFieldVal = keyFieldValue;
 
     if (!linkFieldVal) {
       toast.warning('Unable to find Observation number. Please save the record first.');
@@ -539,19 +598,138 @@ async function handleCancelButton(buttonName, screenTag, eventObj, devInterface)
     const userName = getUserName() || '';
 
     // C++: Insert tracing record
-    // INSERT INTO HSE_NRSTMISCENTTRC (NRSTMISCENTTRC_DATTIM,NRSTMISCENTTRC_ACCDESC,NRSTMISCENTTRC_LNK,NRSTMISCENTTRC_ENTUSR,SRCSCRN)
-    // VALUES (getdate(),'Canceled',<link>,<user>,'<screen>')
-    const insertTracingSql = `INSERT INTO HSE_NRSTMISCENTTRC (NRSTMISCENTTRC_DATTIM,NRSTMISCENTTRC_ACCDESC,NRSTMISCENTTRC_LNK,NRSTMISCENTTRC_ENTUSR,SRCSCRN) VALUES (getdate(),'Canceled',${linkFieldVal},'${userName.replace(/'/g, "''")}','${screenName.replace(/'/g, "''")}')`;
+    // C++: strSQL.Format("insert into HSE_NRSTMISCENTTRC (NRSTMISCENTTRC_DATTIM,NRSTMISCENTTRC_ACCDESC,NRSTMISCENTTRC_LNK,NRSTMISCENTTRC_ENTUSR,SRCSCRN) values (getdate(),'Canceled',%s,'%s','%s')",linkFieldVal,strUserName,strScreenName);
+    // Note: linkFieldVal is inserted as a number (no quotes), userName and screenName are strings (with quotes)
+    // Ensure linkFieldVal is a number (remove any quotes or convert to number)
+    const linkFieldValNum = typeof linkFieldVal === 'string' ? linkFieldVal.replace(/['"]/g, '') : linkFieldVal;
+    const insertTracingSql = `INSERT INTO HSE_NRSTMISCENTTRC (NRSTMISCENTTRC_DATTIM,NRSTMISCENTTRC_ACCDESC,NRSTMISCENTTRC_LNK,NRSTMISCENTTRC_ENTUSR,SRCSCRN) VALUES (getdate(),'Canceled',${linkFieldValNum},'${userName.replace(/'/g, "''")}','${screenName.replace(/'/g, "''")}')`;
+
+    console.log('[Web_HSE] Inserting Cancel tracing record with SQL:', insertTracingSql);
+    console.log('[Web_HSE] Link field value:', linkFieldValNum, 'Type:', typeof linkFieldValNum);
 
     try {
-      await executeSQLAsync(insertTracingSql);
-      console.log('[Web_HSE] ✓ Tracing record inserted for cancelled observation');
+      // Get timestamp just before inserting "Canceled" record
+      // This helps us identify and delete any "Completed" records inserted after
+      const getMaxTimestampSql = `SELECT MAX(NRSTMISCENTTRC_DATTIM) as MaxTime FROM HSE_NRSTMISCENTTRC WHERE NRSTMISCENTTRC_LNK = ${linkFieldValNum}`;
+      let maxTimestampBefore = null;
+      try {
+        const maxTimeResult = await executeSQLAsync(getMaxTimestampSql);
+        if (maxTimeResult?.recordsets?.[0]?.[0]?.MaxTime) {
+          const timestampValue = maxTimeResult.recordsets[0][0].MaxTime;
+          // SQL Server returns datetime as a string or Date object - handle both
+          if (timestampValue instanceof Date) {
+            maxTimestampBefore = timestampValue.toISOString().replace('T', ' ').substring(0, 23);
+          } else if (typeof timestampValue === 'string') {
+            maxTimestampBefore = timestampValue;
+          } else {
+            // Convert to string if it's some other format
+            maxTimestampBefore = String(timestampValue);
+          }
+          console.log('[Web_HSE] Max timestamp before Cancel:', maxTimestampBefore, typeof maxTimestampBefore);
+        }
+      } catch (e) {
+        console.warn('[Web_HSE] Could not get max timestamp:', e);
+      }
+
+      const insertResult = await executeSQLAsync(insertTracingSql);
+      console.log('[Web_HSE] ✓ Tracing record inserted for cancelled observation. Result:', insertResult);
 
       // C++: DoToolBarAction(TOOLBAR_SAVE,strForm_Tag,"");
       doToolbarAction('SAVE', formTag, '');
 
-      // C++: RefreshScreen("",REFRESH_SELECTED);
-      refreshData('', 'REFRESH_SELECTED');
+      // After save, delete any "Completed" record that was inserted after our "Canceled" record
+      // The save action might insert a "Completed" record, but we want "Canceled" to be the final action
+      // Use a delay to ensure save completes, then delete "Completed" records and refresh
+      setTimeout(async () => {
+        try {
+          let deletedRows = 0;
+          if (maxTimestampBefore) {
+            // maxTimestampBefore is already a SQL datetime string, use it directly
+            const deleteCompletedSql = `DELETE FROM HSE_NRSTMISCENTTRC 
+                                        WHERE NRSTMISCENTTRC_LNK = ${linkFieldValNum} 
+                                        AND NRSTMISCENTTRC_ACCDESC = 'Completed' 
+                                        AND NRSTMISCENTTRC_DATTIM > '${maxTimestampBefore}'`;
+            const deleteResult = await executeSQLAsync(deleteCompletedSql);
+            deletedRows = deleteResult?.rowsAffected?.[0] || 0;
+            console.log('[Web_HSE] Deleted "Completed" record(s) inserted after "Canceled". Rows affected:', deletedRows);
+          } else {
+            // Fallback: delete any "Completed" record inserted in the last 5 seconds
+            const deleteCompletedSql = `DELETE FROM HSE_NRSTMISCENTTRC 
+                                        WHERE NRSTMISCENTTRC_LNK = ${linkFieldValNum} 
+                                        AND NRSTMISCENTTRC_ACCDESC = 'Completed' 
+                                        AND NRSTMISCENTTRC_DATTIM >= DATEADD(SECOND, -5, GETDATE())`;
+            const deleteResult = await executeSQLAsync(deleteCompletedSql);
+            deletedRows = deleteResult?.rowsAffected?.[0] || 0;
+            console.log('[Web_HSE] Deleted recent "Completed" record(s) (fallback method). Rows affected:', deletedRows);
+          }
+
+          // Verify the "Canceled" record exists and check all tracing records
+          const verifyCanceledSql = `SELECT TOP 1 NRSTMISCENTTRC_ACCDESC, NRSTMISCENTTRC_DATTIM 
+                                     FROM HSE_NRSTMISCENTTRC 
+                                     WHERE NRSTMISCENTTRC_LNK = ${linkFieldValNum} 
+                                     AND NRSTMISCENTTRC_ACCDESC = 'Canceled' 
+                                     ORDER BY NRSTMISCENTTRC_DATTIM DESC`;
+          const verifyResult = await executeSQLAsync(verifyCanceledSql);
+          const canceledExists = verifyResult?.recordsets?.[0]?.length > 0;
+          console.log('[Web_HSE] Verification - "Canceled" record exists:', canceledExists);
+
+          // Check all tracing records for this observation (from table)
+          const allTracingSql = `SELECT NRSTMISCENTTRC_ACCDESC, NRSTMISCENTTRC_DATTIM, NRSTMISCENTTRC_LNK 
+                                FROM HSE_NRSTMISCENTTRC 
+                                WHERE NRSTMISCENTTRC_LNK = ${linkFieldValNum} 
+                                ORDER BY NRSTMISCENTTRC_DATTIM DESC`;
+          const allTracingResult = await executeSQLAsync(allTracingSql);
+          const allRecords = allTracingResult?.recordsets?.[0] || [];
+          console.log('[Web_HSE] All tracing records for observation', linkFieldValNum, ':', allRecords);
+
+          // Check if records are visible through the view (what the tab uses)
+          const viewTracingSql = `SELECT NRSTMISCENTTRC_ACCDESC, NRSTMISCENTTRC_DATTIM, NrstMiscEntTrc_Lnk 
+                                 FROM HSE_NrstMiscEntTrc 
+                                 WHERE NrstMiscEntTrc_Lnk = ${linkFieldValNum} 
+                                 ORDER BY NRSTMISCENTTRC_DATTIM DESC`;
+          try {
+            const viewTracingResult = await executeSQLAsync(viewTracingSql);
+            const viewRecords = viewTracingResult?.recordsets?.[0] || [];
+            console.log('[Web_HSE] Tracing records visible through VIEW HSE_NrstMiscEntTrc:', viewRecords.length, 'records');
+            if (viewRecords.length === 0 && allRecords.length > 0) {
+              console.error('[Web_HSE] ⚠️ Records exist in table but NOT in view! This indicates a view/field name mismatch.');
+              console.error('[Web_HSE] Table has', allRecords.length, 'records, but view returns', viewRecords.length);
+            }
+          } catch (viewError) {
+            console.warn('[Web_HSE] Could not query view HSE_NrstMiscEntTrc:', viewError);
+            console.warn('[Web_HSE] This might indicate the view name or field name is different');
+          }
+
+          // C++: RefreshScreen("",REFRESH_SELECTED);
+          // Refresh after deletion to show the correct tracing records
+          // Note: refreshData should refresh both main form and tabs
+          refreshData('', 'REFRESH_SELECTED');
+          
+          // Force multiple refreshes to ensure tab data loads
+          // The Tracing tab might need the user to click on it, but we'll try to refresh it
+          setTimeout(() => {
+            refreshData('', 'REFRESH_SELECTED');
+            console.log('[Web_HSE] Second refresh triggered for Tracing tab');
+          }, 500);
+          
+          setTimeout(() => {
+            refreshData('', 'REFRESH_SELECTED');
+            console.log('[Web_HSE] Third refresh triggered for Tracing tab');
+          }, 1500);
+          
+          if (deletedRows > 0) {
+            console.log('[Web_HSE] Successfully removed "Completed" record. Tracing tab should now show "Canceled"');
+            console.log('[Web_HSE] If Tracing tab is still empty, please click on the Tracing tab to refresh it');
+          }
+          
+          // Log summary for debugging
+          console.log('[Web_HSE] Cancel operation complete. Records in DB:', allRecords.length, 'Canceled records:', allRecords.filter(r => r.NRSTMISCENTTRC_ACCDESC === 'Canceled').length);
+        } catch (deleteError) {
+          console.warn('[Web_HSE] Could not delete "Completed" record:', deleteError);
+          // Still refresh even if deletion failed
+          refreshData('', 'REFRESH_SELECTED');
+        }
+      }, 1000); // Wait 1 second for save to complete
 
       toast.success('Observation cancelled successfully');
     } catch (error) {

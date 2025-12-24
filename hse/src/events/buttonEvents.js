@@ -1,4 +1,6 @@
 import { sendButtonClickToBackend } from '../services/ObservationService';
+import { isObservationTabsEnabled, manageObservationTabs, manageCommentsTabToolBar } from '../services/TabManagementService';
+import { OBSERVATION_SCREEN_TAGS } from '../config/constants';
 
 // Module-level variable to store devInterface functions
 let devInterfaceObj = {};
@@ -25,17 +27,52 @@ export function setDevInterface(devInterface) {
  *   complete }           // complete 1,0 0 -> before event , 1-> after event
  * 
  * This event MUST call callBackFn after finish it's work
+ * 
+ * RQ_HSM_22_12_10_59: Implement Investigation Team Tab
+ * RQ_HSM_22_12_11_13: Implement Comments Tab
+ * 
+ * C++: NearMissEntryCategory::DisplayRecordRepostion() when iComplete==1
  */
-// Note: Pending reject observation is now managed in ObservationService.js
-// This keeps buttonEvents.js as a general dispatcher without business logic
-
-export function toolBarButtonClicked(eventObj, callBackFn) {
+export async function toolBarButtonClicked(eventObj, callBackFn) {
   let { fullRecord, isNewMode, strBtnName, strScrTag, strTabTag, complete } = eventObj;
-  strScrTag = strScrTag.toUpperCase();
-  strBtnName = strBtnName.toUpperCase();
+  strScrTag = strScrTag ? strScrTag.toString().toUpperCase() : '';
+  strBtnName = strBtnName ? strBtnName.toString().toUpperCase() : '';
+  strTabTag = strTabTag ? strTabTag.toString().toUpperCase() : '';
   
-  // This is a generalized event handler - no business logic here
-  // All business logic is handled in ObservationService.js via ButtonClicked event
+  try {
+    // C++: if(pRecordRepostion->iComplete==1) - handle tab enabling after save
+    // complete: 0 -> before event, 1 -> after event
+    if (complete === 1) {
+      // Check if this is an Observation screen
+      // Use constants and also check for common observation screen patterns
+      const isObservationScreen = OBSERVATION_SCREEN_TAGS.some(tag => 
+        strScrTag.includes(tag.toUpperCase())
+      ) || strScrTag.includes('NRSTMISC') || strScrTag.includes('NERMSENT');
+      
+      if (isObservationScreen) {
+        const { executeSQLPromise, TabEnable } = devInterfaceObj;
+        
+        if (executeSQLPromise && TabEnable) {
+          // C++: bool bObservationTabsEnabled = isObservationTabsEnabled();
+          const tabsEnabled = await isObservationTabsEnabled(executeSQLPromise, devInterfaceObj.getValFromRecordSet);
+          
+          // C++: EnableTab("HSE_TgNrstMiscEntinvstgtntems", true/false);
+          // C++: EnableTab("HSE_TGNERMSENTCMNTS", true/false);
+          manageObservationTabs(strScrTag, tabsEnabled, TabEnable);
+        }
+      }
+      
+      // C++: if(strSubFormTag.Find("CMNT") != -1 && pRecordRepostion->iComplete == 1)
+      // Manage Comments tab toolbar when navigating after save
+      if (strTabTag && strTabTag.includes('CMNTS')) {
+        manageCommentsTabToolBar(strScrTag, strTabTag, devInterfaceObj);
+      }
+    }
+  } catch (error) {
+    console.warn('[Web_HSE] Error in toolBarButtonClicked tab management:', error);
+  }
+  
+  // Always call callback to continue normal flow
   callBackFn(eventObj);
 }
 

@@ -16,3 +16,4 @@ export function getMessage(getCurrentLang, key, paramArr = []) {
   return message;
 }
 
+
