@@ -1,4 +1,5 @@
-import { manageCommentsTabToolBar } from '../services/TabManagementService';
+import { manageCommentsTabToolBar, isObservationTabsEnabled, manageObservationTabs } from '../services/ObservationService';
+import { OBSERVATION_SCREEN_TAGS } from '../config/constants';
 
 // Module-level variable to store devInterface functions
 let devInterfaceObj = {};
@@ -50,6 +51,30 @@ export function MainSubReposition(strFormTag, Main_Position, Seleted_Tab, strSel
       strSelectedTabTag = strSelectedTabTag.toString().toUpperCase();
     }
 
+    // Debug: Log when Tracing tab is accessed
+    if (strSelectedTabTag && (strSelectedTabTag.includes('TRC') || strSelectedTabTag.includes('TRACING'))) {
+      const { FormGetField } = devInterfaceObj;
+      if (FormGetField) {
+        // Try to get the observation number to verify link field
+        const obsNum = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM') ||
+                      FormGetField('HSE_vwNRSTMISCENT', 'NrstMiscEnt_NrstMiscNum') ||
+                      FormGetField(strFormTag, 'NRSTMISCENT_NRSTMISCNUM') ||
+                      FormGetField(strFormTag, 'NrstMiscEnt_NrstMiscNum') ||
+                      '';
+        console.log('[Web_HSE] Tracing tab accessed:', {
+          formTag: strFormTag,
+          tabTag: strSelectedTabTag,
+          observationNumber: obsNum,
+          note: 'If no records show, verify:',
+          checks: [
+            '1. View HSE_NrstMiscEntTrc exists in database',
+            '2. Records exist in HSE_NRSTMISCENTTRC table with NRSTMISCENTTRC_LNK matching observation number',
+            '3. Check server logs for SQL query and results'
+          ]
+        });
+      }
+    }
+
     // C++: if(strSubFormTag.Find("CMNT") != -1 && pRecordRepostion->iComplete == 1)
     // For Comments tab, manage toolbar and fields when navigating
     // Note: In C++, this checks iComplete==1, but in JS MainSubReposition doesn't have that flag
@@ -72,7 +97,32 @@ export function MainSubReposition(strFormTag, Main_Position, Seleted_Tab, strSel
  * @param {*} strScrTag screen tag
  * @param {*} strTabTag tab tag
  */
-export function ShowScreen(setScreenDisableBtn, strScrTag, strTabTag) {
+export async function ShowScreen(setScreenDisableBtn, strScrTag, strTabTag) {
   setScreenDisableBtn(false, false, false);
+  
+  // Enable observation tabs when screen first loads (not just after save)
+  // Only enable for main screen, not for tabs
+  if (!strTabTag || strTabTag === '') {
+    try {
+      const normalizedScrTag = strScrTag ? strScrTag.toString().toUpperCase() : '';
+      const isObservationScreen = OBSERVATION_SCREEN_TAGS.some(tag => 
+        normalizedScrTag.includes(tag.toUpperCase())
+      ) || normalizedScrTag.includes('NRSTMISC') || normalizedScrTag.includes('NERMSENT');
+      
+      if (isObservationScreen) {
+        const { executeSQLPromise, TabEnable } = devInterfaceObj;
+        
+        if (executeSQLPromise && TabEnable) {
+          // Check if tabs should be enabled
+          const tabsEnabled = await isObservationTabsEnabled(executeSQLPromise, devInterfaceObj.getValFromRecordSet);
+          
+          // Enable/disable tabs based on configuration
+          manageObservationTabs(strScrTag, tabsEnabled, TabEnable);
+        }
+      }
+    } catch (error) {
+      console.warn('[Web_HSE] Error enabling observation tabs in ShowScreen:', error);
+    }
+  }
 }
 
