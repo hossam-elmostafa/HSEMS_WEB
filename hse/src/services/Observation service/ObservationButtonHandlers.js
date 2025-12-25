@@ -13,6 +13,7 @@ import { toast } from "react-toastify";
  * - RQ_HSM_22_12_11_10: Handle View Reject Reason Custom Button
  * - RQ_HSM_22_12_11_28: Handle Close Custom Button
  * - RQ_HSM_22_12_25_09_35: Implement Entry Completed
+ * - RQ_HSM_22_12_25_11_43: Handle Reward Entry Completed Custom Button
  */
 
 // Store pending reject observation execution info (module-level)
@@ -669,6 +670,75 @@ export async function handleCancelButton(buttonName, screenTag, eventObj, devInt
   } catch (error) {
     console.error('[Web_HSE] Error in handleCancelButton:', error);
     toast.error('An error occurred while processing the Cancel action');
+  }
+}
+
+/**
+ * Handle Reward Entry Complete button click
+ * RQ_HSM_22_12_25_11_43: Handle Reward Entry Completed Custom Button
+ * Implements the logic from NearMissReward::DisplayCustomButtonClicked for NRSTMISCENT_ENTCMPLT (Reward screen)
+ * 
+ * C++ Reference: NearMissReward::completeNearMissReward
+ * This is separate from handleEntryCompleteButton - it's specifically for the Reward screen
+ * 
+ * @param {string} buttonName - The button name
+ * @param {string} screenTag - The screen tag
+ * @param {Object} eventObj - The full event object
+ * @param {Object} devInterface - Object containing devInterface functions
+ */
+export async function handleRewardEntryCompleteButton(buttonName, screenTag, eventObj, devInterface) {
+  try {
+    const { FormSetField, refreshData } = devInterface;
+    
+    // Check if required functions are available
+    if (!FormSetField || !refreshData) {
+      console.error('[Web_HSE] Missing required devInterface functions for Reward Entry Complete button');
+      toast.error('System error: Required functions not available');
+      return;
+    }
+
+    // Extract event data
+    // C++: CString strSubFormTag(pCustomButtonClicked->SubForm_Tag);
+    const { strTabTag, fullRecordArrKeys } = eventObj || {};
+    
+    // C++: int Count = 0;
+    //      if(strSubFormTag == "")
+    //      Count = pCustomButtonClicked->pMultiSelectedRows->lCount;
+    //      if( Count == 0) {
+    //          AfxMessageBox("You must save the Record first");
+    //          return false;
+    //      }
+    // Check if record is saved (must have selected records)
+    let recordCount = 0;
+    if (!strTabTag || strTabTag === '') {
+      // Main form - check if we have selected records (equivalent to pMultiSelectedRows->lCount)
+      recordCount = fullRecordArrKeys ? fullRecordArrKeys.length : 0;
+    }
+
+    if (recordCount === 0) {
+      toast.warning('You must save the Record first');
+      return;
+    }
+
+    // C++: void NearMissReward::completeNearMissReward(CUSTOMBUTTONCLICKED* pCustomButtonClicked)
+    // {
+    //     FormSetField("HSE_vwNRSTMISCENT","NRSTMISCENT_RWRDFLG","Y");
+    //     RefreshScreen("",REFRESH_SELECTED);
+    // }
+    
+    // Set the reward flag to "Y"
+    // C++: FormSetField("HSE_vwNRSTMISCENT","NRSTMISCENT_RWRDFLG","Y");
+    FormSetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_RWRDFLG', 'Y');
+    
+    // C++: RefreshScreen("",REFRESH_SELECTED);
+    refreshData('', 'REFRESH_SELECTED');
+    
+    // Show success message (separate from entry completed message)
+    toast.success('Observation reward entry completed successfully');
+    
+  } catch (error) {
+    console.error('[Web_HSE] Error in handleRewardEntryCompleteButton:', error);
+    toast.error('An error occurred while processing the Reward Entry Complete action');
   }
 }
 

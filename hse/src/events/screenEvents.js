@@ -1,5 +1,6 @@
 import { manageCommentsTabToolBar, isObservationTabsEnabled, manageObservationTabs } from '../services/Observation service/ObservationService';
 import { OBSERVATION_SCREEN_TAGS } from '../config/constants';
+import { mapUnknownFieldTypes } from '../utils/fieldTypeMapper';
 
 // Module-level variable to store devInterface functions
 let devInterfaceObj = {};
@@ -99,6 +100,14 @@ export function MainSubReposition(strFormTag, Main_Position, Seleted_Tab, strSel
  */
 export async function ShowScreen(setScreenDisableBtn, strScrTag, strTabTag) {
   setScreenDisableBtn(false, false, false);
+  
+  // Map UNKNOWN field types to appropriate types
+  // This fixes fields like NRSTMISCENT_SGSTDACTNS that come with Type: 'UNKNOWN'
+  try {
+    await mapUnknownFieldTypes(strScrTag, strTabTag, devInterfaceObj);
+  } catch (error) {
+    console.warn('[Web_HSE] Error mapping unknown field types in ShowScreen:', error);
+  }
   
   // Enable observation tabs when screen first loads (not just after save)
   // Only enable for main screen, not for tabs

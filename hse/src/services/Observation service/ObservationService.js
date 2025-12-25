@@ -8,6 +8,7 @@ import {
   handleCancelButton,
   handleCloseButton,
   handleEntryCompleteButton,
+  handleRewardEntryCompleteButton,
   handleRejectReasonOkButton,
   setPendingRejectObservation,
   clearPendingRejectObservation,
@@ -116,8 +117,19 @@ export function sendButtonClickToBackend(buttonName, screenTag, eventObj = {}, d
     // ClickUp Task: https://app.clickup.com/t/86c76v8yr
     handleRejectButton(buttonName, screenTag, eventObj, devInterface);
   } else if (normalizedButton === 'NRSTMISCENT_ENTCMPLT' || normalizedButton.endsWith('_ENTCMPLT')) {
+    // RQ_HSM_22_12_25_11_43: Handle Reward Entry Completed Custom Button
     // RQ_HSM_22_12_25_09_35: Implement Entry Completed
-    handleEntryCompleteButton(buttonName, screenTag, eventObj, devInterface);
+    // The same button name is used for both Entry and Reward screens, but they have different handlers
+    // C++: NearMissReward::DisplayCustomButtonClicked handles NRSTMISCENT_ENTCMPLT for reward screen
+    //      NearMissEntryCategory::DisplayCustomButtonClicked handles it for entry screen
+    // Check if this is the Reward screen (normalizedScreenTag is already uppercase)
+    if (normalizedScreenTag.includes('RWARD') || normalizedScreenTag === 'HSE_TGNRMISRWARD') {
+      // This is the Reward screen - use reward handler
+      handleRewardEntryCompleteButton(buttonName, screenTag, eventObj, devInterface);
+    } else {
+      // This is the Entry screen - use entry handler
+      handleEntryCompleteButton(buttonName, screenTag, eventObj, devInterface);
+    }
   } else if (normalizedButton === 'NRSTMISCENT_ACP' || normalizedButton.endsWith('_ACP')) {
     // RQ_HSM_22_12_10_48: Handle Confirm/Accept button
     // ClickUp Task: https://app.clickup.com/t/86c76v5ze
