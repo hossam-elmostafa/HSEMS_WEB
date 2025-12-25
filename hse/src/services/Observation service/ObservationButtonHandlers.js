@@ -11,6 +11,7 @@ import { toast } from "react-toastify";
  * - RQ_HSM_22_12_10_50: Handle Reject Custom Button
  * - RQ_HSM_22_12_10_55: Handle Cancel Custom Button
  * - RQ_HSM_22_12_11_10: Handle View Reject Reason Custom Button
+ * - RQ_HSM_22_12_25_09_35: Implement Entry Completed
  */
 
 // Store pending reject observation execution info (module-level)
@@ -670,16 +671,19 @@ export async function handleCancelButton(buttonName, screenTag, eventObj, devInt
 
 /**
  * Handle Entry Complete button click
+ * RQ_HSM_22_12_25_09_35: Implement Entry Completed
  * Implements the logic from NearMissEntryCategory::DisplayCustomButtonClicked for NRSTMISCENT_ENTCMPLT
+ * 
+ * C++ Reference: NearMissEntryCategory::DisplayCustomButtonClicked (lines 29-68)
+ * 
  * @param {string} buttonName - The button name
  * @param {string} screenTag - The screen tag
  * @param {Object} eventObj - The full event object
  * @param {Object} devInterface - Object containing devInterface functions
  */
-//needs testing and validation  
 export async function handleEntryCompleteButton(buttonName, screenTag, eventObj, devInterface) {
   try {
-    const { FormGetField, executeSQL, executeSQLPromise, getUserName, refreshData, getFldValFrmFullRec } = devInterface;
+    const { FormGetField, executeSQL, executeSQLPromise, getUserName, refreshData } = devInterface;
     
     // Check if required functions are available
     if (!FormGetField || (!executeSQL && !executeSQLPromise) || !getUserName || !refreshData) {
@@ -692,18 +696,22 @@ export async function handleEntryCompleteButton(buttonName, screenTag, eventObj,
     const executeSQLAsync = executeSQLPromise || executeSQL;
 
     // Extract event data
-    const { fullRecord: fullRecordArr, strTabTag, fullRecordArrKeys } = eventObj || {};
+    // C++: CString strSubFormTag(pCustomButtonClicked->SubForm_Tag);
+    const { strTabTag, fullRecordArrKeys } = eventObj || {};
     
+    // C++: int Count = 0;
+    //      if(strSubFormTag == "")
+    //      Count = pCustomButtonClicked->pMultiSelectedRows->lCount;
+    //      if( Count == 0) {
+    //          AfxMessageBox("You must save the Record first");
+    //          return false;
+    //      }
     // Check if record is saved (must have selected records)
     // Rule: If (Near Miss Confirmation) checkbox [11@600] = "un-checked", then
-    // If no records selected, show error message
     let recordCount = 0;
     if (!strTabTag || strTabTag === '') {
-      // Main form - check if we have selected records
-      recordCount = fullRecordArr ? (Array.isArray(fullRecordArr) ? fullRecordArr.length : 1) : 0;
-    } else {
-      // Subform - check if we have selected records
-      recordCount = fullRecordArr ? (Array.isArray(fullRecordArr) ? fullRecordArr.length : 1) : 0;
+      // Main form - check if we have selected records (equivalent to pMultiSelectedRows->lCount)
+      recordCount = fullRecordArrKeys ? fullRecordArrKeys.length : 0;
     }
 
     if (recordCount === 0) {
@@ -711,24 +719,34 @@ export async function handleEntryCompleteButton(buttonName, screenTag, eventObj,
       return;
     }
 
-    // Get screen tag - use the form tag from event or screenTag parameter
-    const formTag = screenTag || 'HSE_TGNRSTMISCENT';
-    
-    // Get key field value - try from fullRecordArrKeys first, then from form field
-    // C++: GetKeyField(pCustomButtonClicked->Form_Tag, pCustomButtonClicked->pMultiSelectedRows)
+    // Get key field value (Observation number)
+    // C++: CString KeyFieldValue = GetKeyField(pCustomButtonClicked->Form_Tag, pCustomButtonClicked->pMultiSelectedRows);
     let observationId = '';
     if (fullRecordArrKeys && fullRecordArrKeys.length > 0) {
-      // Get key from selected records (most reliable)
+      // Get key from selected records (most reliable, equivalent to GetKeyField)
       observationId = fullRecordArrKeys[0].toString();
-    } else if (fullRecordArr && fullRecordArr.length > 0) {
-      // Try to get from fullRecord array
-      const firstRecord = Array.isArray(fullRecordArr) ? fullRecordArr[0] : fullRecordArr;
-      observationId = firstRecord?.NRSTMISCENT_NRSTMISCNUM || firstRecord?.NRSTMISCNUM || '';
-    }
-    
-    // If still not found, try to get from form field
-    if (!observationId) {
-      observationId = FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM') || '';
+    } else {
+      // Fallback: try to get from form field
+      // Try multiple form tags as fallback (view name is more reliable)
+      try {
+        observationId = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM') || '';
+      } catch (e) {
+        // Ignore error, try next option
+      }
+      if (!observationId) {
+        try {
+          observationId = FormGetField('HSE_TgNrstMiscEnt', 'NRSTMISCENT_NRSTMISCNUM') || '';
+        } catch (e) {
+          // Ignore error, try next option
+        }
+      }
+      if (!observationId && screenTag) {
+        try {
+          observationId = FormGetField(screenTag, 'NRSTMISCENT_NRSTMISCNUM') || '';
+        } catch (e) {
+          // Ignore error
+        }
+      }
     }
     
     if (!observationId) {
@@ -737,7 +755,33 @@ export async function handleEntryCompleteButton(buttonName, screenTag, eventObj,
     }
     
     // RQ-2-2024.14: Update NRSTMISCENT_RPRDSC with NRSTMISCENT_NRSTMISCDESC
-    const description = FormGetField(formTag, 'NRSTMISCENT_NRSTMISCDESC') || '';
+    // C++: CString strDescription = FormGetField("HSE_TgNrstMiscEnt","NRSTMISCENT_NRSTMISCDESC");
+    //      CString strID=FormGetField("HSE_TgNrstMiscEnt","NRSTMISCENT_NRSTMISCNUM");
+    //      CString strSql;
+    //      strSql.Format("update HSE_VWNRSTMISCENT set NRSTMISCENT_RPRDSC='%s' where NRSTMISCENT_NRSTMISCNUM=%s",strDescription,strID);
+    //      long lRet = ExecuteSQL(strSql);
+    
+    // Try multiple form tags to get description (view name is more reliable)
+    let description = '';
+    try {
+      description = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCDESC') || '';
+    } catch (e) {
+      // Ignore error, try next option
+    }
+    if (!description) {
+      try {
+        description = FormGetField('HSE_TgNrstMiscEnt', 'NRSTMISCENT_NRSTMISCDESC') || '';
+      } catch (e) {
+        // Ignore error, try next option
+      }
+    }
+    if (!description && screenTag) {
+      try {
+        description = FormGetField(screenTag, 'NRSTMISCENT_NRSTMISCDESC') || '';
+      } catch (e) {
+        // Ignore error - description update is optional
+      }
+    }
 
     // Update the RPRDSC field
     if (description) {
@@ -751,16 +795,28 @@ export async function handleEntryCompleteButton(buttonName, screenTag, eventObj,
       }
     }
 
+    // C++: bool bNearMissComplete = CompleteNearMiss(pCustomButtonClicked);
+    // CompleteNearMiss function:
+    //   CString strUserName = GetUserLogin();
+    //   CString strSourceScreenName = GetScrCptnByTag(66,pCustomButtonClicked->Form_Tag,"");
+    //   CString KeyFieldValue = GetKeyField(pCustomButtonClicked->Form_Tag,pCustomButtonClicked->pMultiSelectedRows);
+    //   strSQL.Format("EXECUTE completeNearMissTXN '%s','%s','%s'",KeyFieldValue,strSourceScreenName,strUserName);
+    //   long lRet = ExecuteSQL(strSQL);
+    //   RefreshScreen("",REFRESH_SELECTED);
+    //   if(lRet != 0)
+    //       bNearMissComplete  = true;
+    
     // Get key field value for the stored procedure
-    // The key field is NRSTMISCENT_NRSTMISCNUM
     const keyFieldValue = observationId;
     
-    // Get source screen name - using screen tag to get caption
-    // In C++: GetScrCptnByTag(66, pCustomButtonClicked->Form_Tag, "")
-    // For now, we'll use the screen tag as the source screen name
-    const sourceScreenName = formTag;
+    // Get source screen name
+    // C++: CString strSourceScreenName = GetScrCptnByTag(66, pCustomButtonClicked->Form_Tag, "");
+    // Note: GetScrCptnByTag gets the screen caption from the screen tag
+    // For now, we'll use the screen tag as the source screen name (this matches other implementations)
+    const sourceScreenName = screenTag || 'HSE_TgNrstMiscEnt';
     
     // Get user name
+    // C++: CString strUserName = GetUserLogin();
     const userName = getUserName() || '';
     
     // Execute the completeNearMissTXN stored procedure
@@ -770,14 +826,20 @@ export async function handleEntryCompleteButton(buttonName, screenTag, eventObj,
     try {
       const result = await executeSQLAsync(storedProcSql);
       
-      // Refresh the screen
+      // C++: RefreshScreen("",REFRESH_SELECTED);
       refreshData('', 'REFRESH_SELECTED');
       
       // Show success message
       toast.success('Observation entry completed successfully');
       
-      // Note: Email functionality is commented out in C++ code, so we skip it here
-      // If needed in the future, it can be implemented similar to the C++ code
+      // C++: Email functionality is commented out, so we skip it here
+      // if(bNearMissComplete) {
+      //     EMailMsgHandler *eMailMsgHandler = new EMailMsgHandler(m_pCategory);
+      //     CString strMailBody = eMailMsgHandler->FormatMailBody(ID_MAIL_Observation_Complete,"");
+      //     CString strMsg = m_pCategory->GetHSEObj()->sendMail(strSenderName,strMailSubject,strHSEDepMail,strMailBody,"");
+      //     AfxMessageBox(strMsg);
+      //     RefreshScreen("",REFRESH_SELECTED);
+      // }
       
     } catch (error) {
       console.error('[Web_HSE] Error executing completeNearMissTXN:', error);

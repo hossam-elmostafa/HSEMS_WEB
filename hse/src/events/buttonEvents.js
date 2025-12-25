@@ -1,4 +1,4 @@
-import { sendButtonClickToBackend, isObservationTabsEnabled, manageObservationTabs, manageCommentsTabToolBar } from '../services/ObservationService';
+import { sendButtonClickToBackend, isObservationTabsEnabled, manageObservationTabs, manageCommentsTabToolBar } from '../services/Observation service/ObservationService';
 import { OBSERVATION_SCREEN_TAGS } from '../config/constants';
 
 // Module-level variable to store devInterface functions

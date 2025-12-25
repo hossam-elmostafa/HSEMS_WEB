@@ -1,4 +1,4 @@
-import { manageCommentsTabToolBar, isObservationTabsEnabled, manageObservationTabs } from '../services/ObservationService';
+import { manageCommentsTabToolBar, isObservationTabsEnabled, manageObservationTabs } from '../services/Observation service/ObservationService';
 import { OBSERVATION_SCREEN_TAGS } from '../config/constants';
 
 // Module-level variable to store devInterface functions

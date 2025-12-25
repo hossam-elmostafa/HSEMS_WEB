@@ -1,4 +1,4 @@
-import { OBSERVATION_SCREEN_TAGS } from '../config/constants';
+import { OBSERVATION_SCREEN_TAGS } from '../../config/constants';
 
 // Import button handlers from ObservationButtonHandlers
 import {
@@ -114,7 +114,7 @@ export function sendButtonClickToBackend(buttonName, screenTag, eventObj = {}, d
     // ClickUp Task: https://app.clickup.com/t/86c76v8yr
     handleRejectButton(buttonName, screenTag, eventObj, devInterface);
   } else if (normalizedButton === 'NRSTMISCENT_ENTCMPLT' || normalizedButton.endsWith('_ENTCMPLT')) {
-    // Handle Entry Complete button
+    // RQ_HSM_22_12_25_09_35: Implement Entry Completed
     handleEntryCompleteButton(buttonName, screenTag, eventObj, devInterface);
   } else if (normalizedButton === 'NRSTMISCENT_ACP' || normalizedButton.endsWith('_ACP')) {
     // RQ_HSM_22_12_10_48: Handle Confirm/Accept button
