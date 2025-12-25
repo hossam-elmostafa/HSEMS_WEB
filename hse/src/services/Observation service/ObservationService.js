@@ -6,6 +6,7 @@ import {
   handleRejectButton,
   handleConfirmButton,
   handleCancelButton,
+  handleCloseButton,
   handleEntryCompleteButton,
   handleRejectReasonOkButton,
   setPendingRejectObservation,
@@ -97,12 +98,13 @@ export function sendButtonClickToBackend(buttonName, screenTag, eventObj = {}, d
     return;
   }
   
-  // Handle buttons: View Reject Reason, Reject, Confirm, Cancel, Entry Complete
+  // Handle buttons: View Reject Reason, Reject, Confirm, Cancel, Close, Entry Complete
   // Button names follow pattern:
   // - *_VWRJCTRSNS (View Reject Reasons on tracing tab)
   // - NRSTMISCENT_RJC (Reject)
   // - NRSTMISCENT_ACP (Confirm/Accept)
   // - NRSTMISCENT_CNCL (Cancel)
+  // - NRSTMISCENT_CLS (Close)
   // - NRSTMISCENT_ENTCMPLT (Entry Complete)
   if (normalizedButton.endsWith('_VWRJCTRSNS')) {
     // RQ_HSM_22_12_09_57: View Reject Reason (Observation Entry)
@@ -124,6 +126,9 @@ export function sendButtonClickToBackend(buttonName, screenTag, eventObj = {}, d
     // RQ_HSM_22_12_10_55: Handle Cancel Custom Button
     // ClickUp Task: https://app.clickup.com/t/86c76v9yr
     handleCancelButton(buttonName, screenTag, eventObj, devInterface);
+  } else if (normalizedButton === 'NRSTMISCENT_CLS' || normalizedButton.endsWith('_CLS')) {
+    // (RQ_HSM_22_12_11_28) Handle Close Custom Button
+    handleCloseButton(buttonName, screenTag, eventObj, devInterface);
   } else {
     // Other buttons are not handled
     console.log('[Web_HSE Debug] Button not handled. Button name:', normalizedButton);

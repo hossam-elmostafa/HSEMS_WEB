@@ -60,7 +60,8 @@ export function manageObservationTabs(formTag, tabsEnabled, TabEnable) {
   // Determine tab tags based on screen type
   // Entry screen: HSE_TgNrstMiscEnt
   // Review screen: HSE_TgNrstMisccnfrmtn
-  // Follow-up screen: HSE_TgNrstMiscflwup
+  // Approval/Follow-up screen: HSE_TgNrstMiscflwup
+  // Reward screen: HSE_TgNrMisRward
   let investigationTeamTab, commentsTab, tracingTab;
   
   if (normalizedFormTag.includes('CNFRMTN') || normalizedFormTag === 'HSE_TGNRSTMISCCNFRMTN') {
@@ -70,10 +71,14 @@ export function manageObservationTabs(formTag, tabsEnabled, TabEnable) {
     tracingTab = 'HSE_TgNrstMisccnfrmtnTrc';
   } else if (normalizedFormTag.includes('FLWUP') || normalizedFormTag === 'HSE_TGNRSTMISCFLWUP') {
     // Observation Approval/Follow-up screen
-    // TODO: Add follow-up screen tab tags if needed
-    investigationTeamTab = 'HSE_TgNrstMiscEntinvstgtntems';
-    commentsTab = 'HSE_TGNERMSENTCMNTS';
-    tracingTab = 'HSE_TgNrstMiscEntTrc';
+    investigationTeamTab = 'HSE_TgNrstMiscFlwupinvstgtntems';
+    commentsTab = 'HSE_TGNRMSFLWUPCMNTS';
+    tracingTab = 'HSE_TgNrstMiscflwupTrc';
+  } else if (normalizedFormTag.includes('RWARD') || normalizedFormTag === 'HSE_TGNRMISRWARD') {
+    // Observation Reward screen
+    investigationTeamTab = 'HSE_TgNrMisRwardInvstgtntems';
+    commentsTab = 'HSE_TgNrMisRwardCMNTS';
+    tracingTab = 'HSE_TgNrMisRwardTrc';
   } else {
     // Default: Observation Entry screen
     investigationTeamTab = 'HSE_TgNrstMiscEntinvstgtntems';
