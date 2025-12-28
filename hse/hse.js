@@ -9,7 +9,7 @@ import { toast } from "react-toastify";
 import { toolBarButtonClicked, ButtonClicked, setDevInterface } from './src/events/buttonEvents';
 import { OnBeforeBrowseButtonClick, UpdateAfterBrowse } from './src/events/browseEvents';
 import { SubFieldChanged, MainSubReposition, ShowScreen, setDevInterface as setScreenDevInterface } from './src/events/screenEvents';
-import { beforeRenderAppMenu, beforeRenderCustomActions, onMenuItemClicked, onAppOpen } from './src/events/menuEvents';
+import { beforeRenderAppMenu, beforeRenderCustomActions, onMenuItemClicked, onAppOpen, setMenuDevInterface } from './src/events/menuEvents';
 
 // Import utilities
 import { getMessage } from './src/utils/messageUtils';
@@ -105,6 +105,9 @@ export default function useHSE(useDevInterfaceFun) {
   
   // Set devInterface for screen event handlers (MainSubReposition, etc.)
   setScreenDevInterface(devInterfaceObj);
+  
+  // Set devInterface for menu event handlers (onMenuItemClicked, etc.)
+  setMenuDevInterface(devInterfaceObj);
 
   // Return all event handlers and devInterfaceObj
   return {

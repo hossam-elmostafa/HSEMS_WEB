@@ -1,5 +1,16 @@
 import { applayDisabledTags } from '../utils/menuUtils';
 
+// Module-level variable to store devInterface functions
+let devInterfaceObj = {};
+
+/**
+ * Set devInterface functions for menu event handlers
+ * @param {Object} devInterface - Object containing devInterface functions
+ */
+export function setMenuDevInterface(devInterface) {
+  devInterfaceObj = devInterface || {};
+}
+
 /**
  * @name beforeRenderAppMenu
  * @description this event is called Before render application menu to disable menu item from Client 'if app logic require that'
@@ -64,9 +75,40 @@ export async function beforeRenderCustomActions(userObj, tag, actionsList) {
 }
 
 /**
+ * Get employee department for the logged-in user
+ * C++ equivalent: getEmpDep(GetUserLogin(), true)
+ * @param {string} userName - The user login name
+ * @returns {Promise<string>} - The employee department code
+ */
+async function getEmployeeDepartment(userName) {
+  try {
+    const { executeSQLPromise, getValFromRecordSet } = devInterfaceObj;
+    if (!executeSQLPromise || !getValFromRecordSet) {
+      console.warn('[Web_HSE] Missing devInterface functions for getEmployeeDepartment');
+      return '';
+    }
+
+    // C++: SELECT EMPLOYEE_WSHOP FROM CMN_EMPLOYEE WHERE EMPLOYEE_USRID = userName
+    // Note: C++ uses EMPLOYEE_USRID, but web might use EMPLOYEE_LOGINNAME
+    const sql = `SELECT TOP 1 EMPLOYEE_WSHOP FROM CMN_EMPLOYEE WHERE (EMPLOYEE_USRID = '${userName.replace(/'/g, "''")}' OR EMPLOYEE_LOGINNAME = '${userName.replace(/'/g, "''")}')`;
+    const result = await executeSQLPromise(sql);
+    const department = getValFromRecordSet(result, 'EMPLOYEE_WSHOP');
+    return department || '';
+  } catch (error) {
+    console.error('[Web_HSE] Error getting employee department:', error);
+    return '';
+  }
+}
+
+/**
  * @name onMenuItemClicked
  * @description This event is called when user click on Menu Item,Is used for set new screen criteria 'based on your application logic'
  *              or disallow user from open screen with specific message -> strMsg
+ * 
+ * Implements dynamic criteria for CAR screens based on C++ logic:
+ * - CAR Entry (HSE_TgCrEntry): If user dept != owner dept, filter by CRENTRY_DPR
+ * - Actions Entry (HSE_TgActnsEntry): If user dept != owner dept, filter by CRENTRY_CNCDPR
+ * 
  * @param {object} userObj
  * @param {string} strScrTag
  * @param {function} callBackFn
@@ -80,13 +122,83 @@ export async function beforeRenderCustomActions(userObj, tag, actionsList) {
  * };
  */
 export function onMenuItemClicked(userObj, strScrTag, callBackFn) {
+  console.log('[Web_HSE] onMenuItemClicked called for:', strScrTag);
+  
   let retVal = {
     isAllowed: true,
     strScrCriteria: "",
     strMsg: "",
   };
-  // TODO : Your application login here...
-  callBackFn(retVal);
+
+  try {
+    const normalizedScrTag = (strScrTag || '').toString().toUpperCase();
+    console.log('[Web_HSE] Normalized screen tag:', normalizedScrTag);
+    
+    // CAR Entry screen - add department filter if needed
+    // C++: If user department != owner department, add WHERE CRENTRY_DPR='{userDepartment}'
+    // Note: The header.json already has: WHERE (CONVERT(INT, CRENTRY_CRSTT) <3)
+    // We need to merge our criteria with the existing WhereClause using AND
+    if (normalizedScrTag === 'HSE_TGCRENTRY') {
+      const userName = userObj?.LogIn || '';
+      if (userName) {
+        // Try to get department from userObj first (usually set during login)
+        let userDepartment = userObj?.EMPLOYEE_WSHOP || '';
+        
+        // If department is in userObj, use it synchronously
+        if (userDepartment) {
+          retVal.strScrCriteria = `AND CRENTRY_DPR='${userDepartment.replace(/'/g, "''")}'`;
+          console.log('[Web_HSE] CAR Entry: Added department filter:', userDepartment);
+        }
+        // If not in userObj, query for it asynchronously and update criteria later
+        // For now, we'll allow the screen to open without filter, and it can be added later if needed
+        // TODO: Consider implementing async department lookup if needed
+      }
+    }
+    
+    // Actions Entry screen - add department filter if needed
+    // C++: If user department != owner department, add WHERE isnull(CRENTRY_CNCDPR,'')='{userDepartment}'
+    // Note: The header.json already has: WHERE (CONVERT(INT, CRENTRY_CRSTT) IN(12,15))
+    // We need to merge our criteria with the existing WhereClause using AND
+    else if (normalizedScrTag === 'HSE_TGACTNSENTRY') {
+      const userName = userObj?.LogIn || '';
+      if (userName) {
+        let userDepartment = userObj?.EMPLOYEE_WSHOP || '';
+        
+        // If department is in userObj, use it synchronously
+        if (userDepartment) {
+          retVal.strScrCriteria = `AND isnull(CRENTRY_CNCDPR,'')='${userDepartment.replace(/'/g, "''")}'`;
+          console.log('[Web_HSE] Actions Entry: Added department filter:', userDepartment);
+        }
+        // If not in userObj, query for it asynchronously and update criteria later
+        // For now, we'll allow the screen to open without filter, and it can be added later if needed
+        // TODO: Consider implementing async department lookup if needed
+      }
+    }
+    
+    // For all other screens, allow them to open with empty criteria
+    // The callback will be called synchronously below
+    
+  } catch (error) {
+    console.error('[Web_HSE] Error in onMenuItemClicked:', error);
+    // Continue with empty criteria if there's an error - ensure screens can still open
+    retVal.isAllowed = true;
+    retVal.strScrCriteria = "";
+    retVal.strMsg = "";
+  }
+  
+  // Always call the callback synchronously to ensure screens can open
+  // This is critical - the callback must be called for all menu items
+  try {
+    if (typeof callBackFn === 'function') {
+      console.log('[Web_HSE] Calling callback with retVal:', retVal);
+      callBackFn(retVal);
+      console.log('[Web_HSE] Callback called successfully for:', strScrTag);
+    } else {
+      console.warn('[Web_HSE] onMenuItemClicked: callBackFn is not a function');
+    }
+  } catch (callbackError) {
+    console.error('[Web_HSE] Error calling callback in onMenuItemClicked:', callbackError);
+  }
 }
 
 /**

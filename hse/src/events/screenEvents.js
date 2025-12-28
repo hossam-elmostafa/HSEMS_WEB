@@ -1,5 +1,5 @@
 import { manageCommentsTabToolBar, isObservationTabsEnabled, manageObservationTabs } from '../services/Observation service/ObservationService';
-import { OBSERVATION_SCREEN_TAGS } from '../config/constants';
+import { OBSERVATION_SCREEN_TAGS, CAR_SCREEN_TAGS } from '../config/constants';
 import { mapUnknownFieldTypes } from '../utils/fieldTypeMapper';
 
 // Module-level variable to store devInterface functions
@@ -52,27 +52,55 @@ export function MainSubReposition(strFormTag, Main_Position, Seleted_Tab, strSel
       strSelectedTabTag = strSelectedTabTag.toString().toUpperCase();
     }
 
-    // Debug: Log when Tracing tab is accessed
+    // Debug: Log when Tracing tab is accessed (for both Observation and CAR)
     if (strSelectedTabTag && (strSelectedTabTag.includes('TRC') || strSelectedTabTag.includes('TRACING'))) {
       const { FormGetField } = devInterfaceObj;
       if (FormGetField) {
-        // Try to get the observation number to verify link field
-        const obsNum = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM') ||
-                      FormGetField('HSE_vwNRSTMISCENT', 'NrstMiscEnt_NrstMiscNum') ||
-                      FormGetField(strFormTag, 'NRSTMISCENT_NRSTMISCNUM') ||
-                      FormGetField(strFormTag, 'NrstMiscEnt_NrstMiscNum') ||
-                      '';
-        console.log('[Web_HSE] Tracing tab accessed:', {
-          formTag: strFormTag,
-          tabTag: strSelectedTabTag,
-          observationNumber: obsNum,
-          note: 'If no records show, verify:',
-          checks: [
-            '1. View HSE_NrstMiscEntTrc exists in database',
-            '2. Records exist in HSE_NRSTMISCENTTRC table with NRSTMISCENTTRC_LNK matching observation number',
-            '3. Check server logs for SQL query and results'
-          ]
-        });
+        // Check if this is an Observation or CAR screen
+        const isObservationScreen = OBSERVATION_SCREEN_TAGS.some(tag => 
+          strFormTag.includes(tag.toUpperCase())
+        ) || strFormTag.includes('NRSTMISC') || strFormTag.includes('NERMSENT');
+        
+        const isCARScreen = CAR_SCREEN_TAGS.some(tag => 
+          strFormTag.includes(tag.toUpperCase())
+        ) || strFormTag.includes('CRENTRY') || strFormTag.includes('CRCTVEACCENT') || strFormTag.includes('CAR');
+        
+        if (isObservationScreen) {
+          // Try to get the observation number to verify link field
+          const obsNum = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM') ||
+                        FormGetField('HSE_vwNRSTMISCENT', 'NrstMiscEnt_NrstMiscNum') ||
+                        FormGetField(strFormTag, 'NRSTMISCENT_NRSTMISCNUM') ||
+                        FormGetField(strFormTag, 'NrstMiscEnt_NrstMiscNum') ||
+                        '';
+          console.log('[Web_HSE] Observation Tracing tab accessed:', {
+            formTag: strFormTag,
+            tabTag: strSelectedTabTag,
+            observationNumber: obsNum,
+            note: 'If no records show, verify:',
+            checks: [
+              '1. View HSE_NrstMiscEntTrc exists in database',
+              '2. Records exist in HSE_NRSTMISCENTTRC table with NRSTMISCENTTRC_LNK matching observation number',
+              '3. Check server logs for SQL query and results'
+            ]
+          });
+        } else if (isCARScreen) {
+          // Try to get the CAR primary key to verify link field
+          const carPrmKy = FormGetField(strFormTag, 'PRMKY') ||
+                          FormGetField('HSE_CrEntry', 'PRMKY') ||
+                          FormGetField('HSE_TGCRENTRY', 'PRMKY') ||
+                          '';
+          console.log('[Web_HSE] CAR Tracing tab accessed:', {
+            formTag: strFormTag,
+            tabTag: strSelectedTabTag,
+            carPrimaryKey: carPrmKy,
+            note: 'If no records show, verify:',
+            checks: [
+              '1. Table HSE_CrEntry_Trc exists in database',
+              '2. Records exist in HSE_CrEntry_Trc table with CRENTRY_TRC_LNK matching CAR primary key',
+              '3. Check server logs for SQL query and results'
+            ]
+          });
+        }
       }
     }
 
