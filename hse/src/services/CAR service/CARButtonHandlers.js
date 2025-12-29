@@ -245,6 +245,7 @@ export async function handleRejectReasonOkButtonForCAR(devInterface) {
     // 1. Insert record into tracing tab (HSE_CRENTRY_TRC)
     // 2. Link tracing record to reject reasons (via RJCTRSN_TRACINGLNK)
     // 3. Update CAR status to '02' (Entry Rejected)
+    // Note: Use 'PRMKEY' as the C++ code does - the stored procedure will convert it to the correct column name
     const insertTracingSql = `EXECUTE ChangeEntityStatus '${keyFieldValue.toString().replace(/'/g, "''")}','${sourceScreenName.replace(/'/g, "''")}','${userName.replace(/'/g, "''")}','HSE_CRENTRY_','CRENTRY_CRSTT','PRMKEY','02','${strStatus.replace(/'/g, "''")}'`;
     
     console.log('[Web_HSE] Inserting tracing record for CAR Rejected:', insertTracingSql);
@@ -292,6 +293,7 @@ export async function handleViewRejectReasonButtonForCAR(buttonName, screenTag, 
     const {
       FormGetField,
       openScr,
+      executeSQLPromise,
     } = devInterface;
 
     // Validate required functions
@@ -301,39 +303,94 @@ export async function handleViewRejectReasonButtonForCAR(buttonName, screenTag, 
       return;
     }
 
-    // C++: CString strKeyField=FormGetField("HSE_CRCTVEACCENTTRC","CRCTVEACCENTTRC_TRCNG_REFRJCTRSN");
-    // For new CAR module, the table is HSE_CrEntry_Trc
-    // Try both old and new table names - use safeFormGetField to prevent errors
-    let keyField = safeFormGetField(FormGetField, 'HSE_CRCTVEACCENTTRC', 'CRCTVEACCENTTRC_TRCNG_REFRJCTRSN') ||
-                   safeFormGetField(FormGetField, 'HSE_CrEntry_Trc', 'CRENTRY_TRC_REFRJCTRSN') ||
-                   safeFormGetField(FormGetField, 'HSE_CRENTRY_TRC', 'CRENTRY_TRC_REFRJCTRSN') ||
-                   safeFormGetField(FormGetField, screenTag, 'CRENTRY_TRC_REFRJCTRSN') ||
-                   '';
+    console.log('[Web_HSE] ===== View Reject Reason from Tracing Tab START =====');
+    console.log('[Web_HSE] eventObj:', eventObj);
+    console.log('[Web_HSE] screenTag:', screenTag);
 
-    if (!keyField || keyField === '') {
-      console.warn('[Web_HSE] No reject reason key field found. Cannot open reject reasons screen.');
+    // C++: viewRejectReason() - gets tracing record info and queries reject reasons
+    // C++: strLinkValue=FormGetField(strTableName,strLinkField); // CAR primary key (CRENTRY_TRC_LNK)
+    // C++: strCriteria="SELECT * FROM HSE_RJCTRSN WHERE (RJCTRSN_LINKWITHMAIN = '"+strLinkValue+"') AND (RJCTRSN_MODULETYPE like '"+strModulefrmSource+"%')";
+    
+    // Get CAR primary key from the tracing record
+    // The tracing record should have CRENTRY_TRC_LNK which links to the CAR's PrmKy
+    const tracingTableName = screenTag || 'HSE_CrEntry_Trc';
+    
+    // Try to get CAR primary key from eventObj first (most reliable when clicking on a tracing record)
+    let carPrimaryKey = '';
+    if (eventObj && eventObj.fullRecord) {
+      const fullRecord = Array.isArray(eventObj.fullRecord) ? eventObj.fullRecord[0] : eventObj.fullRecord;
+      if (fullRecord) {
+        // Try different field name variations
+        carPrimaryKey = fullRecord.CRENTRY_TRC_LNK || 
+                       fullRecord.CrEntry_Trc_Lnk || 
+                       fullRecord.CRENTRY_TRC_LINK ||
+                       fullRecord.LNK ||
+                       '';
+        console.log('[Web_HSE] Got CAR primary key from eventObj.fullRecord:', carPrimaryKey);
+      }
+    }
+
+    // Fallback: Get from form fields
+    if (!carPrimaryKey) {
+      carPrimaryKey = safeFormGetField(FormGetField, tracingTableName, 'CRENTRY_TRC_LNK') ||
+                     safeFormGetField(FormGetField, 'HSE_CrEntry_Trc', 'CRENTRY_TRC_LNK') ||
+                     safeFormGetField(FormGetField, 'HSE_CRENTRY_TRC', 'CRENTRY_TRC_LNK') ||
+                     safeFormGetField(FormGetField, 'HSE_TGCRENTRY', 'PrmKy') ||
+                     safeFormGetField(FormGetField, 'HSE_CRENTRY', 'PrmKy') ||
+                     '';
+      if (carPrimaryKey) {
+        console.log('[Web_HSE] Got CAR primary key from FormGetField:', carPrimaryKey);
+      }
+    }
+
+    // Final fallback: Query database if we have executeSQLPromise
+    if (!carPrimaryKey && executeSQLPromise) {
+      try {
+        // Try to get the most recent tracing record's link
+        const sql = `SELECT TOP 1 CRENTRY_TRC_LNK FROM HSE_CRENTRY_TRC WHERE CRENTRY_TRC_ACCDESC = 'Entry Rejected' ORDER BY CRENTRY_TRC_DATTIM DESC`;
+        const result = await executeSQLPromise(sql);
+        if (result && result.recordset && result.recordset.length > 0) {
+          const record = result.recordset[0];
+          carPrimaryKey = (record.CRENTRY_TRC_LNK || record.CrEntry_Trc_Lnk || '').toString();
+          if (carPrimaryKey) {
+            console.log('[Web_HSE] Got CAR primary key from database query:', carPrimaryKey);
+          }
+        }
+      } catch (dbError) {
+        console.warn('[Web_HSE] Could not query database for CAR primary key:', dbError);
+      }
+    }
+
+    if (!carPrimaryKey) {
+      console.error('[Web_HSE] No CAR primary key found. Cannot open reject reasons screen.');
+      console.error('[Web_HSE] eventObj.fullRecord:', eventObj?.fullRecord);
       toast.warning('No reject reason found for this record');
       return;
     }
 
-    // C++: strSQL.Format("SELECT * FROM CMS_RSNS WHERE (RSNS_RFREC = '%s')",strKeyField);
-    // C++: strDefValues.Format("RSNS_RFREC|%s",strKeyField);
-    // C++: ShowScreen(0,"CMS_RSNS","Reject Reasons",NORMAL_MODE,true,strSQL,"",strDefValues,"",bLocked);
-    const rejectReasonScreenTag = 'CMS_RSNS';
-    const criteria = `SELECT * FROM CMS_RSNS WHERE (RSNS_RFREC = '${keyField.replace(/'/g, "''")}')`;
-    const defValObj = {
-      RSNS_RFREC: keyField,
-    };
-    const bLocked = true;
+    // Module type for CAR - use LIKE pattern to match CRCTVEACCENT-L1, CRCTVEACCENT-L2, etc.
+    const moduleType = 'CRCTVEACCENT'; // CAR module type (C++ uses like 'CRCTVEACCENT%' to match L1, L2, etc.)
 
-    console.log('[Web_HSE] Opening reject reasons screen for CAR:', {
+    // C++: Queries reject reasons where:
+    // - RJCTRSN_LINKWITHMAIN = CAR primary key
+    // - RJCTRSN_MODULETYPE like 'CRCTVEACCENT%' (to match CRCTVEACCENT-L1, etc.)
+    // Note: The C++ code doesn't filter by RJCTRSN_TRACINGLNK in the final query (line 1769)
+    // The stored procedure ChangeEntityStatus should update RJCTRSN_TRACINGLNK to link reject reasons to the tracing record
+    // But the query just uses LINKWITHMAIN and MODULETYPE
+    const criteria = `(RJCTRSN_LINKWITHMAIN = '${carPrimaryKey.toString().replace(/'/g, "''")}') AND (RJCTRSN_MODULETYPE LIKE '${moduleType}%')`;
+
+    const rejectReasonScreenTag = 'HSE_TGRjctRsn';
+    const bLocked = true; // Open in read-only/locked mode
+
+    console.log('[Web_HSE] Opening reject reasons screen for CAR Tracing:', {
       screenTag: rejectReasonScreenTag,
-      keyField: keyField,
+      carPrimaryKey: carPrimaryKey,
+      moduleType: moduleType,
       criteria: criteria,
     });
 
     // Open the reject reasons screen locked
-    openScr(rejectReasonScreenTag, {}, criteria, 'edit', true, defValObj, bLocked);
+    openScr(rejectReasonScreenTag, {}, criteria, 'edit', true, {}, bLocked);
   } catch (error) {
     console.error('[Web_HSE] Error in handleViewRejectReasonButtonForCAR:', error);
     toast.error('An error occurred while opening reject reasons screen');
@@ -400,7 +457,9 @@ export async function handleCARReviewInfoButton(buttonName, screenTag, eventObj,
       // Try to read from database directly
       // C++: GetPolicyTabField reads from HSE_HSEPLC_ADT table
       // C++: GetPolicyTabField does: "Select fieldName From tableName" (gets first row)
-      const policySql = `SELECT TOP 1 HSEPLC_ADT_CRBSS, HSEPLC_ADT_ENBCRRVWINF FROM HSE_HSEPLC_ADT ORDER BY PRMKY DESC`;
+      // C++: GetPolicyTabField("HSE_HSEPLC_ADT","HSEPLC_ADT_CRBSS") does: "Select HSEPLC_ADT_CRBSS From HSE_HSEPLC_ADT"
+      // No ORDER BY clause - just gets the first row
+      const policySql = `SELECT TOP 1 HSEPLC_ADT_CRBSS, HSEPLC_ADT_ENBCRRVWINF FROM HSE_HSEPLC_ADT`;
       try {
         const policyResult = await executeSQLAsync(policySql);
         // Handle different result formats
@@ -583,7 +642,9 @@ export async function handleAcceptCARButton(buttonName, screenTag, eventObj, dev
     // Check policy settings
     try {
       // Read from database
-      const policySql = `SELECT TOP 1 HSEPLC_ADT_CRBSS, HSEPLC_ADT_ENBCRRVWINF FROM HSE_HSEPLC_ADT ORDER BY PRMKY DESC`;
+      // C++: GetPolicyTabField("HSE_HSEPLC_ADT","HSEPLC_ADT_CRBSS") does: "Select HSEPLC_ADT_CRBSS From HSE_HSEPLC_ADT"
+      // No ORDER BY clause - just gets the first row
+      const policySql = `SELECT TOP 1 HSEPLC_ADT_CRBSS, HSEPLC_ADT_ENBCRRVWINF FROM HSE_HSEPLC_ADT`;
       try {
         const policyResult = await executeSQLAsync(policySql);
         // Handle different result formats
@@ -630,11 +691,14 @@ export async function handleAcceptCARButton(buttonName, screenTag, eventObj, dev
     if (bUpdateAcceptedRecord) {
       // C++: InsertIntoTracingTabProcess(pCustomButtonClicked,strStatus,strSourceScreenName);
       // C++: strSQL.Format("EXECUTE ChangeEntityStatus '%s','%s','%s','HSE_CRENTRY_','CRENTRY_CRSTT','PRMKEY','02','%s'",KeyFieldValue,strSourceScreenName,strUserName,strStatus);
+      // Note: The C++ code uses 'PRMKEY' (not 'PRMKY'). The stored procedure should handle the conversion to the actual column name.
       const strSourceScreenName = 'CAR Review';
       const strStatus = 'CAR Accepted';
       const userName = getUserName() || '';
       
-      const insertTracingSql = `EXECUTE ChangeEntityStatus '${keyFieldValue.toString().replace(/'/g, "''")}','${strSourceScreenName.replace(/'/g, "''")}','${userName.replace(/'/g, "''")}','HSE_CRENTRY_','CRENTRY_CRSTT','PRMKEY','02','${strStatus.replace(/'/g, "''")}'`;
+      // Use 'PRMKEY' as the C++ code does - the stored procedure will convert it to the correct column name
+      // Status '10' = CAR Accepted (not '02' which is Entry Rejected)
+      const insertTracingSql = `EXECUTE ChangeEntityStatus '${keyFieldValue.toString().replace(/'/g, "''")}','${strSourceScreenName.replace(/'/g, "''")}','${userName.replace(/'/g, "''")}','HSE_CRENTRY_','CRENTRY_CRSTT','PRMKEY','10','${strStatus.replace(/'/g, "''")}'`;
       
       console.log('[Web_HSE] Inserting tracing record for CAR Accepted:', insertTracingSql);
       await executeSQLAsync(insertTracingSql);
@@ -643,7 +707,12 @@ export async function handleAcceptCARButton(buttonName, screenTag, eventObj, dev
       FormSetField(formTag, 'CRENTRY_CRSTT', '10');
 
       // C++: DoToolBarAction(TOOLBAR_SAVE,strFormTag,"");
-      doToolbarAction('SAVE', formTag, '');
+      // Note: doToolbarAction is not implemented in web framework, so we directly update the database
+      // Update the status field directly in the database to ensure it's saved
+      const updateStatusSql = `UPDATE dbo.HSE_CRENTRY SET CRENTRY_CRSTT = '10' WHERE PrmKy = ${keyFieldValue}`;
+      console.log('[Web_HSE] Updating CAR status to 10 (Accepted):', updateStatusSql);
+      await executeSQLAsync(updateStatusSql);
+      console.log('[Web_HSE] ✓ CAR status updated successfully');
 
       // C++: RefreshScreen("",REFRESH_SELECTED);
       refreshData('', 'REFRESH_SELECTED');
