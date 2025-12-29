@@ -5,6 +5,7 @@ import {
   handleRejectCARButton,
   handleRejectReasonOkButtonForCAR,
   handleViewRejectReasonButtonForCAR,
+  handleViewRejectReasonButton,
   handleCARReviewInfoButton,
   handleAcceptCARButton,
   handleViewSourceTXNButton,
@@ -182,6 +183,15 @@ export function sendButtonClickToBackend(buttonName, screenTag, eventObj = {}, d
            normalizedButton.includes('VIEW_SOURCE_TXN')) {
     console.log('[Web_HSE] ✓ View Source TXN button matched:', normalizedButton);
     handleViewSourceTXNButton(buttonName, screenTag, eventObj, devInterface);
+  }
+  // Handle View Reject Reason button
+  // RQ_AG_28_12_25_15_23.01: View Reject Reason
+  else if (normalizedButton === 'VIEW_REJECT_REASON' || 
+           normalizedButton === 'VIEWREJECTREASON' ||
+           normalizedButton === 'VIEW_REJECTREASON' ||
+           normalizedButton.includes('VIEW_REJECT_REASON')) {
+    console.log('[Web_HSE] ✓ View Reject Reason button matched:', normalizedButton);
+    handleViewRejectReasonButton(buttonName, screenTag, eventObj, devInterface);
   } else {
     // Other buttons are not handled
     console.log('[Web_HSE Debug] CAR Button not handled. Button name:', normalizedButton);

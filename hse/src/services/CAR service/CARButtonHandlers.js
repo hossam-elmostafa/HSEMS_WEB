@@ -10,6 +10,7 @@ import { toast } from "react-toastify";
  * - RQ_AG_25_12_25_15_19.01.02: CAR Review info - https://app.clickup.com/t/86c785q04
  * - RQ_AG_25_12_25_15_19.01.03: Accept CAR - https://app.clickup.com/t/86c785q2w
  * - RQ_AG_25_12_25_15_19.01.04: View Source TXN - https://app.clickup.com/t/86c785q7c
+ * - RQ_AG_28_12_25_15_23.01: View Reject Reason - https://app.clickup.com/t/86c78rue1
  */
 
 // Store pending reject CAR execution info (module-level)
@@ -137,7 +138,11 @@ export async function handleRejectCARButton(buttonName, screenTag, eventObj, dev
     // Use openScr with the reject reason screen tag and default values
     // The screen will handle the dialog/prompt internally
     const rejectReasonScreenTag = 'HSE_TGRjctRsn';
-    const criteria = `SELECT * FROM HSE_RJCTRSN WHERE (RJCTRSN_LINKWITHMAIN='${keyFieldValue.replace(/'/g, "''")}') AND (RJCTRSN_MODULETYPE='${moduleType}') AND (ISNULL(RJCTRSN_TRACINGLNK, 0) = 0)`;
+    // For new reject reason entry, use criteria that allows new records
+    // If reject reasons exist, show them; if not, allow new entry
+    // Note: The web framework expects just WHERE conditions, not a full SELECT statement
+    // The framework will build: SELECT ... FROM HSE_RjctRsn WHERE [criteria]
+    const criteria = `(RJCTRSN_LINKWITHMAIN='${keyFieldValue.replace(/'/g, "''")}') AND (RJCTRSN_MODULETYPE='${moduleType.replace(/'/g, "''")}') AND (ISNULL(RJCTRSN_TRACINGLNK, 0) = 0)`;
     
     // Set default values for the reject reason screen
     // C++: FormSetField("HSE_RJCTRSN","RJCTRSN_LINKWITHMAIN",strKeyValForRjctScr)
@@ -164,10 +169,15 @@ export async function handleRejectCARButton(buttonName, screenTag, eventObj, dev
       console.warn('[Web_HSE] Error checking reject reason count before:', error);
     }
 
-    // Store info for executing rejectCARTXN after reject reason screen OK button is clicked
+    // Store info for executing ChangeEntityStatus after reject reason screen OK button is clicked
     // C++: After reject reason screen closes, checks getgbUpdateRejectedRecord() flag
     // In JS: We use ButtonClicked event to detect when RJCTRSN_BTN_OK is clicked
     // C++: setgbUpdateRejectedRecord(false) is set initially, then true when OK is clicked
+    const {
+      FormSetField,
+      doToolbarAction,
+    } = devInterface;
+    
     setPendingRejectCAR({
       keyFieldValue: keyFieldValue.toString(), // Ensure it's a string for the stored procedure
       formTag,
@@ -175,6 +185,8 @@ export async function handleRejectCARButton(buttonName, screenTag, eventObj, dev
       executeSQLAsync,
       refreshData,
       toast,
+      FormSetField,
+      doToolbarAction,
     });
 
     // Open the reject reason screen - it has its own built-in dialog
@@ -185,7 +197,9 @@ export async function handleRejectCARButton(buttonName, screenTag, eventObj, dev
       moduleType: moduleType,
     });
     
-    openScr(rejectReasonScreenTag, {}, criteria, 'edit', true, defValObj, false);
+    // Open in edit mode with default values
+    // Don't pass bLocked parameter - let it default (Observation module doesn't pass it either)
+    openScr(rejectReasonScreenTag, {}, criteria, 'edit', true, defValObj);
 
     // C++: After screen closes, if getgbUpdateRejectedRecord() == true, execute rejectCARTXN
     // In JS: We use ButtonClicked event to detect when RJCTRSN_BTN_OK is clicked
@@ -215,19 +229,38 @@ export async function handleRejectReasonOkButtonForCAR(devInterface) {
       return;
     }
 
-    console.log('[Web_HSE] Executing rejectCARTXN stored procedure...');
+    console.log('[Web_HSE] Processing CAR rejection and inserting tracing record...');
     
-    const { keyFieldValue, formTag, getUserName, executeSQLAsync, refreshData, toast } = pendingRejectCAR;
+    const { keyFieldValue, formTag, getUserName, executeSQLAsync, refreshData, toast, FormSetField, doToolbarAction } = pendingRejectCAR;
     const userName = getUserName() || '';
-    const sourceScreenName = formTag;
     
-    // C++: strSQL.Format("EXECUTE rejectCARTXN '%s','%s','%s'",KeyFieldValue,strUserName,strSourceScreenName);
-    // Note: keyFieldValue should be passed as string (stored procedure expects VARCHAR)
-    const spSql = `EXECUTE rejectCARTXN '${keyFieldValue.toString().replace(/'/g, "''")}','${userName.replace(/'/g, "''")}','${sourceScreenName.replace(/'/g, "''")}'`;
+    // C++: strSourceScreenName = GetScrCptnByTag(66,strFormTag,"");
+    // For CAR Entry screen, the source screen name should be "CAR Entry"
+    // C++: InsertIntoTracingTabProcess(pCustomButtonClicked,strStatus,strSourceScreenName);
+    // C++: strSQL.Format("EXECUTE ChangeEntityStatus '%s','%s','%s','HSE_CRENTRY_','CRENTRY_CRSTT','PRMKEY','02','%s'",KeyFieldValue,strSourceScreenName,strUserName,strStatus);
+    const sourceScreenName = 'CAR Entry'; // Screen caption for HSE_TGCRENTRY
+    const strStatus = 'Entry Rejected'; // Action description for tracing
     
-    console.log('[Web_HSE] Executing SQL:', spSql);
-    await executeSQLAsync(spSql);
-    console.log('[Web_HSE] ✓ rejectCARTXN executed successfully');
+    // ChangeEntityStatus will:
+    // 1. Insert record into tracing tab (HSE_CRENTRY_TRC)
+    // 2. Link tracing record to reject reasons (via RJCTRSN_TRACINGLNK)
+    // 3. Update CAR status to '02' (Entry Rejected)
+    const insertTracingSql = `EXECUTE ChangeEntityStatus '${keyFieldValue.toString().replace(/'/g, "''")}','${sourceScreenName.replace(/'/g, "''")}','${userName.replace(/'/g, "''")}','HSE_CRENTRY_','CRENTRY_CRSTT','PRMKEY','02','${strStatus.replace(/'/g, "''")}'`;
+    
+    console.log('[Web_HSE] Inserting tracing record for CAR Rejected:', insertTracingSql);
+    await executeSQLAsync(insertTracingSql);
+    console.log('[Web_HSE] ✓ Tracing record inserted successfully');
+    
+    // C++: FormSetField(strFormTag,"CRENTRY_CRSTT","02");
+    // Note: ChangeEntityStatus already updates the status, but we set it here for consistency
+    if (FormSetField) {
+      FormSetField(formTag, 'CRENTRY_CRSTT', '02');
+    }
+    
+    // C++: DoToolBarAction(TOOLBAR_SAVE,strFormTag,"");
+    if (doToolbarAction) {
+      doToolbarAction('SAVE', formTag, '');
+    }
     
     // C++: RefreshScreen("",REFRESH_SELECTED);
     refreshData('', 'REFRESH_SELECTED');
@@ -270,11 +303,11 @@ export async function handleViewRejectReasonButtonForCAR(buttonName, screenTag, 
 
     // C++: CString strKeyField=FormGetField("HSE_CRCTVEACCENTTRC","CRCTVEACCENTTRC_TRCNG_REFRJCTRSN");
     // For new CAR module, the table is HSE_CrEntry_Trc
-    // Try both old and new table names
-    let keyField = FormGetField('HSE_CRCTVEACCENTTRC', 'CRCTVEACCENTTRC_TRCNG_REFRJCTRSN') ||
-                   FormGetField('HSE_CrEntry_Trc', 'CRENTRY_TRC_REFRJCTRSN') ||
-                   FormGetField('HSE_CRENTRY_TRC', 'CRENTRY_TRC_REFRJCTRSN') ||
-                   FormGetField(screenTag, 'CRENTRY_TRC_REFRJCTRSN') ||
+    // Try both old and new table names - use safeFormGetField to prevent errors
+    let keyField = safeFormGetField(FormGetField, 'HSE_CRCTVEACCENTTRC', 'CRCTVEACCENTTRC_TRCNG_REFRJCTRSN') ||
+                   safeFormGetField(FormGetField, 'HSE_CrEntry_Trc', 'CRENTRY_TRC_REFRJCTRSN') ||
+                   safeFormGetField(FormGetField, 'HSE_CRENTRY_TRC', 'CRENTRY_TRC_REFRJCTRSN') ||
+                   safeFormGetField(FormGetField, screenTag, 'CRENTRY_TRC_REFRJCTRSN') ||
                    '';
 
     if (!keyField || keyField === '') {
@@ -960,6 +993,125 @@ export async function handleViewSourceTXNButton(buttonName, screenTag, eventObj,
   } catch (error) {
     console.error('[Web_HSE] Error in handleViewSourceTXNButton:', error);
     toast.error('An error occurred while opening source transaction screen');
+  }
+}
+
+/**
+ * Handle View Reject Reason button click
+ * RQ_AG_28_12_25_15_23.01: View Reject Reason
+ * Opens the reject reason screen for the current CAR record
+ * 
+ * C++ Reference:
+ * - HSEMSCommonCategory.cpp line 1640-1652: Reject() helper function
+ * - Opens HSE_TGRJCTRSN screen with criteria based on CAR primary key
+ * 
+ * @param {string} buttonName - The button name (e.g. VIEW_REJECT_REASON, VIEWREJECTREASON)
+ * @param {string} screenTag - The screen tag
+ * @param {Object} eventObj - The full event object
+ * @param {Object} devInterface - Object containing devInterface functions
+ */
+export async function handleViewRejectReasonButton(buttonName, screenTag, eventObj, devInterface) {
+  try {
+    console.log('[Web_HSE] ===== View Reject Reason Button Handler START =====');
+    console.log('[Web_HSE] eventObj received:', eventObj ? 'YES' : 'NO', eventObj);
+    
+    const {
+      FormGetField,
+      openScr,
+      executeSQLPromise,
+      getValFromRecordSet,
+    } = devInterface;
+
+    // Validate required functions
+    if (!FormGetField || !openScr) {
+      console.error('[Web_HSE] Missing required devInterface functions for View Reject Reason button');
+      toast.error('System error: Required functions not available');
+      return;
+    }
+
+    const formTag = screenTag || 'HSE_TGCRENTRY';
+    const moduleType = 'CRCTVEACCENT'; // CAR module type
+    
+    // Get primary key from eventObj (like other handlers do)
+    const { fullRecord: fullRecordArr, fullRecordArrKeys } = eventObj || {};
+    let keyFieldValue = '';
+    
+    // Try to get primary key from eventObj first (most reliable)
+    if (fullRecordArrKeys && fullRecordArrKeys.length > 0) {
+      keyFieldValue = fullRecordArrKeys[0].toString();
+      console.log('[Web_HSE] Got primary key from eventObj.fullRecordArrKeys:', keyFieldValue);
+    } else if (fullRecordArr && fullRecordArr.length > 0) {
+      // Try to get from fullRecordArr
+      const firstRecord = Array.isArray(fullRecordArr) ? fullRecordArr[0] : fullRecordArr;
+      keyFieldValue = firstRecord?.PRMKY || firstRecord?.PrmKy || firstRecord?.Prmky || firstRecord?.prmky || '';
+      if (keyFieldValue) {
+        console.log('[Web_HSE] Got primary key from eventObj.fullRecordArr:', keyFieldValue);
+      }
+    }
+    
+    // Fallback: Try to get primary key from form field
+    if (!keyFieldValue) {
+      keyFieldValue = safeFormGetField(FormGetField, formTag, 'PrmKy') ||
+                     safeFormGetField(FormGetField, formTag, 'PRMKY') ||
+                     safeFormGetField(FormGetField, 'HSE_CRENTRY', 'PrmKy') ||
+                     safeFormGetField(FormGetField, 'HSE_CRENTRY', 'PRMKY') ||
+                     safeFormGetField(FormGetField, 'HSE_TGCRENTRY', 'PrmKy') ||
+                     safeFormGetField(FormGetField, 'HSE_TGCRENTRY', 'PRMKY') || '';
+      if (keyFieldValue) {
+        console.log('[Web_HSE] Got primary key from FormGetField:', keyFieldValue);
+      }
+    }
+    
+    // Final fallback: Query database if we have executeSQLPromise
+    if (!keyFieldValue && executeSQLPromise) {
+      try {
+        // Try to get the most recent CAR record's primary key
+        const sql = `SELECT TOP 1 PrmKy FROM HSE_CRENTRY ORDER BY PrmKy DESC`;
+        const result = await executeSQLPromise(sql);
+        if (result && result.recordset && result.recordset.length > 0) {
+          const record = result.recordset[0];
+          keyFieldValue = (record.PrmKy || record.Prmky || record.prmky || '').toString();
+          if (keyFieldValue) {
+            console.log('[Web_HSE] Got primary key from database query:', keyFieldValue);
+          }
+        }
+      } catch (dbError) {
+        console.warn('[Web_HSE] Could not query database for primary key:', dbError);
+      }
+    }
+    
+    if (!keyFieldValue) {
+      console.error('[Web_HSE] Primary key not found. Cannot open reject reason screen.');
+      toast.warning('Unable to find CAR record. Please ensure you are viewing a CAR record.');
+      return;
+    }
+    
+    console.log('[Web_HSE] Final primary key value for View Reject Reason:', keyFieldValue);
+    
+    // C++: strCriteria.Format("SELECT * FROM HSE_RJCTRSN WHERE (RJCTRSN_LINKWITHMAIN= '%s') AND (RJCTRSN_MODULETYPE= '%s') AND (RJCTRSN_TRACINGLNK = 0)",strKeyField,strSourceModule);
+    // C++: strDefValues.Format("RJCTRSN_LINKWITHMAIN|%s|RJCTRSN_MODULETYPE|%s",strKeyField,strSourceModule);
+    // C++: ShowScreen(0,"HSE_TGRJCTRSN","Reject Reason",NORMAL_MODE,true,strCriteria,"",strDefValues,"",false);
+    // Note: The web framework expects just WHERE conditions, not a full SELECT statement
+    const rejectReasonScreenTag = 'HSE_TGRjctRsn';
+    const criteria = `(RJCTRSN_LINKWITHMAIN = '${keyFieldValue.replace(/'/g, "''")}') AND (RJCTRSN_MODULETYPE = '${moduleType.replace(/'/g, "''")}') AND (ISNULL(RJCTRSN_TRACINGLNK, 0) = 0)`;
+    const defValObj = {
+      RJCTRSN_LINKWITHMAIN: keyFieldValue,
+      RJCTRSN_MODULETYPE: moduleType,
+    };
+    const bLocked = true; // Open in read-only/locked mode for viewing
+    
+    console.log('[Web_HSE] Opening reject reason screen for CAR:', {
+      screenTag: rejectReasonScreenTag,
+      keyField: keyFieldValue,
+      moduleType: moduleType,
+      criteria: criteria,
+    });
+    
+    // Open the reject reason screen locked (read-only mode)
+    openScr(rejectReasonScreenTag, {}, criteria, 'edit', true, defValObj, bLocked);
+  } catch (error) {
+    console.error('[Web_HSE] Error in handleViewRejectReasonButton:', error);
+    toast.error('An error occurred while opening reject reason screen');
   }
 }
 
