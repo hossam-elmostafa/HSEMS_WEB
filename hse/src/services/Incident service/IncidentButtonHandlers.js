@@ -7,6 +7,7 @@ import { toast } from "react-toastify";
  * 
  * Requirements:
  * - RQ_HSM_HSE_18_12_25_10_19: Implement Incident (Near Miss & Accident)
+ * - RQ_HSM_30_12_25_07_50: Implement Entry Completed
  * 
  * C++ Reference Files:
  * - AccidentCategory.cpp

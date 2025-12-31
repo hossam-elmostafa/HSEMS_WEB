@@ -21,9 +21,11 @@ import {
  * 
  * Requirements:
  * - RQ_HSM_HSE_18_12_25_10_19: Implement Incident (Near Miss & Accident)
+ * - RQ_HSM_30_12_25_07_50: Implement Entry Completed
  * 
  * Button Mappings (based on C++ code):
- * - ACDNTENT_ENTCMPLT: Entry Completed button (AccidentEntryCategory.cpp)
+ * - ACDNTENT_ENTCMPLT / ACDNTENT_EntCmplt: Entry Completed button (AccidentEntryCategory.cpp)
+ *   - RQ_HSM_30_12_25_07_50: When clicked, validates recommended actions and completes the incident entry
  * - ACDNTENT_RJC: Reject button (AccidentCategory.cpp)
  * - ACDNTENT_CNFRM: Confirm button (AccidentConfirmationCategory.cpp)
  * - ACDNTENT_ACCEPT: Accept button (custom)
