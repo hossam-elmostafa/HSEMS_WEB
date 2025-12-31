@@ -8,6 +8,8 @@ import { toast } from "react-toastify";
  * Requirements:
  * - RQ_HSM_HSE_18_12_25_10_19: Implement Incident (Near Miss & Accident)
  * - RQ_HSM_30_12_25_07_50: Implement Entry Completed
+ * - RQ_HSM_30_12_25_08_10: Reject
+ * - RQ_HSM_30_12_25_08_10_1: Accept
  * 
  * C++ Reference Files:
  * - AccidentCategory.cpp
@@ -191,12 +193,29 @@ export async function handleEntryCompletedButton(buttonName, screenTag, eventObj
 
 /**
  * Handle Reject button click for Incident
+ * 
+ * Requirement: RQ_HSM_30_12_25_08_10 - Reject
+ * 
+ * This function implements the "Reject" functionality for Incident screens (Confirmation and Follow-up).
+ * When the user clicks the "Reject" button, it:
+ * 1. Opens the Reject Reason screen (HSE_TGRjctRsn) for the user to enter rejection reasons
+ * 2. Stores pending rejection information to be processed when the user clicks OK in the reject reason screen
+ * 3. The actual rejection is processed in handleRejectReasonOkButtonForIncident() when RJCTRSN_BTN_OK is clicked
+ * 4. The rejection process executes the rejectIncident stored procedure which:
+ *    - Updates the incident status to "Rejected" (status code 2)
+ *    - Inserts a tracing record with rejection information
+ *    - Sets the source screen name and entry user
+ * 
  * C++ Reference: AccidentCategory.cpp line 230-246: ACDNTENT_RJC button handler
  * 
  * @param {string} buttonName - The button name (e.g. ACDNTENT_RJC)
- * @param {string} screenTag - The screen tag
- * @param {Object} eventObj - The full event object
- * @param {Object} devInterface - Object containing devInterface functions
+ * @param {string} screenTag - The screen tag (e.g. HSE_TGACDNTCNFRMTN, HSE_TGACDNTFOLLWUPDT)
+ * @param {Object} eventObj - The full event object containing fullRecord, fullRecordArrKeys, etc.
+ * @param {Object} devInterface - Object containing devInterface functions (FormGetField, executeSQL, openScr, etc.)
+ * 
+ * @example
+ * // Called when user clicks "Reject" button on Incident Confirmation or Follow-up screen
+ * await handleRejectIncidentButton('ACDNTENT_RJC', 'HSE_TGACDNTCNFRMTN', eventObj, devInterface);
  */
 export async function handleRejectIncidentButton(buttonName, screenTag, eventObj, devInterface) {
   try {
@@ -500,12 +519,27 @@ export async function handleConfirmIncidentButton(buttonName, screenTag, eventOb
 
 /**
  * Handle Accept button click for Incident
+ * 
+ * Requirement: RQ_HSM_30_12_25_08_10_1 - Accept
+ * 
+ * This function implements the "Accept" functionality for Incident Confirmation screen.
+ * When the user clicks the "Accept" button, it:
+ * 1. Executes the acceptIncidentTXN stored procedure to:
+ *    - Update the incident status to "Accepted" (status code 15)
+ *    - Insert a tracing record with "Incident Accepted" action description
+ *    - Set the source screen name and entry user
+ * 2. Refreshes the screen to show updated status
+ * 
  * Similar to CAR Accept button logic
  * 
- * @param {string} buttonName - The button name
- * @param {string} screenTag - The screen tag
- * @param {Object} eventObj - The full event object
- * @param {Object} devInterface - Object containing devInterface functions
+ * @param {string} buttonName - The button name (e.g. ACDNTENT_ACCEPT)
+ * @param {string} screenTag - The screen tag (e.g. HSE_TGACDNTCNFRMTN)
+ * @param {Object} eventObj - The full event object containing fullRecord, fullRecordArrKeys, etc.
+ * @param {Object} devInterface - Object containing devInterface functions (FormGetField, executeSQL, etc.)
+ * 
+ * @example
+ * // Called when user clicks "Accept" button on Incident Confirmation screen
+ * await handleAcceptIncidentButton('ACDNTENT_ACCEPT', 'HSE_TGACDNTCNFRMTN', eventObj, devInterface);
  */
 export async function handleAcceptIncidentButton(buttonName, screenTag, eventObj, devInterface) {
   try {

@@ -22,13 +22,17 @@ import {
  * Requirements:
  * - RQ_HSM_HSE_18_12_25_10_19: Implement Incident (Near Miss & Accident)
  * - RQ_HSM_30_12_25_07_50: Implement Entry Completed
+ * - RQ_HSM_30_12_25_08_10: Reject
+ * - RQ_HSM_30_12_25_08_10_1: Accept
  * 
  * Button Mappings (based on C++ code):
  * - ACDNTENT_ENTCMPLT / ACDNTENT_EntCmplt: Entry Completed button (AccidentEntryCategory.cpp)
  *   - RQ_HSM_30_12_25_07_50: When clicked, validates recommended actions and completes the incident entry
  * - ACDNTENT_RJC: Reject button (AccidentCategory.cpp)
+ *   - RQ_HSM_30_12_25_08_10: Opens reject reason screen, then executes rejectIncident stored procedure
  * - ACDNTENT_CNFRM: Confirm button (AccidentConfirmationCategory.cpp)
  * - ACDNTENT_ACCEPT: Accept button (custom)
+ *   - RQ_HSM_30_12_25_08_10_1: Executes acceptIncidentTXN stored procedure to accept the incident
  * - ACDNTENT_CLOSE: Close button (custom)
  * - AcdntEnt_Trc_VWRjctRsns: View Reject Reasons button in Tracing tab
  * - RJCTRSN_BTN_OK: OK button in Reject Reason screen
@@ -70,6 +74,7 @@ export async function handleIncidentButtonClick(buttonName, screenTag, eventObj,
     }
 
     // Reject button
+    // RQ_HSM_30_12_25_08_10: Reject
     if (normalizedButtonName === 'ACDNTENT_RJC' || normalizedButtonName === 'REJECT_INCIDENT') {
       await handleRejectIncidentButton(buttonName, screenTag, eventObj, devInterface);
       return true;
@@ -82,6 +87,7 @@ export async function handleIncidentButtonClick(buttonName, screenTag, eventObj,
     }
 
     // Accept button
+    // RQ_HSM_30_12_25_08_10_1: Accept
     if (normalizedButtonName === 'ACDNTENT_ACCEPT' || normalizedButtonName === 'ACCEPT_INCIDENT') {
       await handleAcceptIncidentButton(buttonName, screenTag, eventObj, devInterface);
       return true;
