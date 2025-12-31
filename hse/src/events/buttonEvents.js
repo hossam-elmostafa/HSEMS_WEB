@@ -1,5 +1,6 @@
 import { sendButtonClickToBackend as sendObservationButtonClick, isObservationTabsEnabled, manageObservationTabs, manageCommentsTabToolBar } from '../services/Observation service/ObservationService';
 import { sendButtonClickToBackend as sendCARButtonClick } from '../services/CAR service/CARService';
+import { handleIncidentButtonClick } from '../services/Incident service/IncidentService';
 import { OBSERVATION_SCREEN_TAGS } from '../config/constants';
 
 // Module-level variable to store devInterface functions
@@ -127,6 +128,10 @@ export function ButtonClicked(eventObj) {
       // Handle Observation module buttons with devInterface access
       // This is a generalized handler - business logic is in ObservationService.js
       sendObservationButtonClick(normalizedButtonName, strScrTag, eventObj, devInterfaceObj);
+      
+      // Handle Incident module buttons with devInterface access
+      // This is a generalized handler - business logic is in IncidentService.js
+      handleIncidentButtonClick(normalizedButtonName, strScrTag, eventObj, devInterfaceObj);
     }
 
     // Any additional button-specific logic can go here
