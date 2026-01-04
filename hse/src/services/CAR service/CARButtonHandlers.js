@@ -51,6 +51,7 @@ export function hasPendingRejectCAR() {
 
 /**
  * Handle Reject CAR button click
+ * RQ_HSM_01_01_26_16_07: Reject CAR
  * RQ_AG_25_12_25_15_19.01.01: Reject CAR
  * Implements the logic from CarCategory::DisplayCustomButtonClicked for CRCTVEACCENT_RJC
  * and CarConfirmationCategory::DisplayCustomButtonClicked for CRCTVEACCENT_CNFRMTN_RJC
@@ -399,6 +400,7 @@ export async function handleViewRejectReasonButtonForCAR(buttonName, screenTag, 
 
 /**
  * Handle CAR Review Info button click
+ * RQ_HSM_01_01_26_16_00: View CAR Review Info
  * RQ_AG_25_12_25_15_19.01.02: CAR Review info
  * Implements the logic from NewCarEntryCategory::DisplayCustomButtonClicked for CAR_REVIEW_INFO
  * 
@@ -552,7 +554,12 @@ export async function handleCARReviewInfoButton(buttonName, screenTag, eventObj,
 
     // C++: ShowScreen(0,"HSE_CrRvwInf","CAR Review Info",NORMAL_MODE,true,strCriteria,"",strDefValues,"",bLocked);
     // bLocked = false for CAR_REVIEW_INFO button (allows editing)
-    openScr(carReviewInfoScreenTag, {}, criteria, 'edit', true, defValObj, false);
+    // bLocked = true for VIEW_CAR_REVIEW_INFO button (locked/read-only)
+    // C++: acceptRecord(strFormTag, true) - second parameter is bLocked
+    const normalizedButton = buttonName ? buttonName.toString().toUpperCase() : '';
+    const bLocked = normalizedButton === 'VIEW_CAR_REVIEW_INFO' || normalizedButton.includes('VIEW_CAR_REVIEW_INFO');
+    
+    openScr(carReviewInfoScreenTag, {}, criteria, 'edit', true, defValObj, bLocked);
   } catch (error) {
     console.error('[Web_HSE] Error in handleCARReviewInfoButton:', error);
     toast.error('An error occurred while opening CAR Review Info screen');
@@ -730,6 +737,7 @@ export async function handleAcceptCARButton(buttonName, screenTag, eventObj, dev
 
 /**
  * Handle View Source TXN button click
+ * RQ_HSM_01_01_26_16_12: View Source TXN
  * RQ_AG_25_12_25_15_19.01.04: View Source TXN
  * Implements the logic from NewCarEntryCategory::DisplayCustomButtonClicked for VIEW_SOURCE_TXN
  * and CarCategory::OpenTXNInquiryScreen
@@ -1181,6 +1189,503 @@ export async function handleViewRejectReasonButton(buttonName, screenTag, eventO
   } catch (error) {
     console.error('[Web_HSE] Error in handleViewRejectReasonButton:', error);
     toast.error('An error occurred while opening reject reason screen');
+  }
+}
+
+// Store pending cancel CAR execution info (module-level)
+let pendingCancelCAR = null;
+
+export function setPendingCancelCAR(carInfo) {
+  pendingCancelCAR = carInfo;
+}
+
+export function clearPendingCancelCAR() {
+  pendingCancelCAR = null;
+}
+
+export function hasPendingCancelCAR() {
+  return pendingCancelCAR !== null;
+}
+
+/**
+ * Handle Cancel CAR button click
+ * RQ_HSM_01_01_26_16_06: Cancel CAR
+ * Implements the logic from NewCarEntryCategory::DisplayCustomButtonClicked for CANCEL_CAR
+ * 
+ * C++ Reference:
+ * - NewCarEntryCategory.cpp line 627-658: CANCEL_CAR button handler
+ * 
+ * @param {string} buttonName - The button name (e.g. CANCEL_CAR)
+ * @param {string} screenTag - The screen tag (e.g. HSE_TGCRAPRVL)
+ * @param {Object} eventObj - The full event object
+ * @param {Object} devInterface - Object containing devInterface functions
+ */
+export async function handleCancelCARButton(buttonName, screenTag, eventObj, devInterface) {
+  try {
+    const {
+      FormGetField,
+      executeSQL,
+      executeSQLPromise,
+      getUserName,
+      refreshData,
+      openScr,
+    } = devInterface;
+
+    // Validate required functions
+    if (
+      !FormGetField ||
+      (!executeSQL && !executeSQLPromise) ||
+      !getUserName ||
+      !refreshData ||
+      !openScr
+    ) {
+      console.error('[Web_HSE] Missing required devInterface functions for Cancel CAR button');
+      toast.error('System error: Required functions not available');
+      return;
+    }
+
+    const executeSQLAsync = executeSQLPromise || executeSQL;
+    const formTag = screenTag || 'HSE_TGCRAPRVL';
+
+    // Extract event data
+    const { fullRecord: fullRecordArr, fullRecordArrKeys } = eventObj || {};
+
+    // Get key field value (CAR primary key)
+    let keyFieldValue = '';
+    if (fullRecordArrKeys && fullRecordArrKeys.length > 0) {
+      keyFieldValue = fullRecordArrKeys[0].toString();
+    } else if (fullRecordArr && fullRecordArr.length > 0) {
+      const firstRecord = Array.isArray(fullRecordArr) ? fullRecordArr[0] : fullRecordArr;
+      keyFieldValue = firstRecord?.PRMKY || firstRecord?.CRENTRY_PRMKY || '';
+    }
+
+    // Fallback: read from form
+    if (!keyFieldValue) {
+      keyFieldValue = safeFormGetField(FormGetField, formTag, 'PRMKY') || 
+                     safeFormGetField(FormGetField, 'HSE_TGCRAPRVL', 'PRMKY') || 
+                     safeFormGetField(FormGetField, 'HSE_CRENTRY', 'PRMKY') ||
+                     safeFormGetField(FormGetField, formTag, 'CRENTRY_PRMKY') || '';
+    }
+
+    if (!keyFieldValue) {
+      toast.warning('Unable to find CAR record. Please select a record first.');
+      return;
+    }
+
+    // Module type for CAR Approval screen
+    const moduleType = 'CRCTVEACCENT-AP';
+
+    // Open reject reason screen (same as Reject CAR)
+    const rejectReasonScreenTag = 'HSE_TGRjctRsn';
+    const criteria = `(RJCTRSN_LINKWITHMAIN='${keyFieldValue.replace(/'/g, "''")}') AND (RJCTRSN_MODULETYPE='${moduleType.replace(/'/g, "''")}') AND (ISNULL(RJCTRSN_TRACINGLNK, 0) = 0)`;
+    
+    const defValObj = {
+      RJCTRSN_LINKWITHMAIN: keyFieldValue,
+      RJCTRSN_MODULETYPE: moduleType,
+      RJCTRSN_TRACINGLNK: 0,
+    };
+
+    const {
+      FormSetField,
+      doToolbarAction,
+    } = devInterface;
+    
+    setPendingCancelCAR({
+      keyFieldValue: keyFieldValue.toString(),
+      formTag,
+      getUserName,
+      executeSQLAsync,
+      refreshData,
+      toast,
+      FormSetField,
+      doToolbarAction,
+    });
+
+    console.log('[Web_HSE] Opening reject reason screen for Cancel CAR:', {
+      screenTag: rejectReasonScreenTag,
+      carNumber: keyFieldValue,
+      moduleType: moduleType,
+    });
+    
+    openScr(rejectReasonScreenTag, {}, criteria, 'edit', true, defValObj);
+  } catch (error) {
+    console.error('[Web_HSE] Error in handleCancelCARButton:', error);
+    toast.error('An error occurred while processing the Cancel CAR action');
+  }
+}
+
+/**
+ * Handle Reject Reason screen OK button click for Cancel CAR
+ * C++: CRejectReason::RejectReasonOk() - sets gbUpdateRejectedRecord = true
+ * This is called when RJCTRSN_BTN_OK is clicked in the reject reason screen for Cancel CAR
+ * @param {Object} devInterface - Object containing devInterface functions
+ */
+export async function handleRejectReasonOkButtonForCancelCAR(devInterface) {
+  try {
+    if (!pendingCancelCAR) {
+      console.warn('[Web_HSE] ⚠ No pending cancel CAR info found. Stored procedure will not execute.');
+      return;
+    }
+
+    console.log('[Web_HSE] Processing CAR cancellation and inserting tracing record...');
+    
+    const { keyFieldValue, formTag, getUserName, executeSQLAsync, refreshData, toast, FormSetField, doToolbarAction } = pendingCancelCAR;
+    const userName = getUserName() || '';
+    
+    // C++: strSourceScreenName = "CAR Approval"
+    // C++: strStatus = "CAR Cancelled"
+    const sourceScreenName = 'CAR Approval';
+    const strStatus = 'CAR Cancelled';
+    
+    // Insert tracing record with ChangeEntityStatus
+    // Status '20' = CAR Cancelled
+    const insertTracingSql = `EXECUTE ChangeEntityStatus '${keyFieldValue.toString().replace(/'/g, "''")}','${sourceScreenName.replace(/'/g, "''")}','${userName.replace(/'/g, "''")}','HSE_CRENTRY_','CRENTRY_CRSTT','PRMKEY','20','${strStatus.replace(/'/g, "''")}'`;
+    
+    console.log('[Web_HSE] Inserting tracing record for CAR Cancelled:', insertTracingSql);
+    await executeSQLAsync(insertTracingSql);
+    console.log('[Web_HSE] ✓ Tracing record inserted successfully');
+    
+    // C++: FormSetField(strFormTag,"CRENTRY_CRSTT","20");
+    if (FormSetField) {
+      FormSetField(formTag, 'CRENTRY_CRSTT', '20');
+    }
+    
+    // C++: DoToolBarAction(TOOLBAR_SAVE,strFormTag,"");
+    if (doToolbarAction) {
+      doToolbarAction('SAVE', formTag, '');
+    }
+    
+    // C++: RefreshScreen("",REFRESH_SELECTED);
+    refreshData('', 'REFRESH_SELECTED');
+    toast.success(`CAR ${keyFieldValue} cancelled successfully`);
+    
+    // Clear pending execution
+    clearPendingCancelCAR();
+  } catch (error) {
+    console.error('[Web_HSE] ✗ Error executing Cancel CAR:', error);
+    if (pendingCancelCAR && pendingCancelCAR.toast) {
+      pendingCancelCAR.toast.error('Error cancelling CAR: ' + (error.message || 'Unknown error'));
+    }
+    clearPendingCancelCAR();
+  }
+}
+
+/**
+ * Handle CAR Approval Info button click
+ * RQ_HSM_01_01_26_16_09: CAR Approval Info
+ * Implements the logic from NewCarEntryCategory::DisplayCustomButtonClicked for CAR_APPROVAL_INFO
+ * 
+ * C++ Reference:
+ * - NewCarEntryCategory.cpp line 561-580: CAR_APPROVAL_INFO button handler
+ * - HSEMSCommonCategory.cpp line 1673-1685: Approve() helper function
+ * 
+ * @param {string} buttonName - The button name (e.g. CAR_APPROVAL_INFO, CAR_Approval_Info)
+ * @param {string} screenTag - The screen tag (e.g. HSE_TGCRAPRVL)
+ * @param {Object} eventObj - The full event object
+ * @param {Object} devInterface - Object containing devInterface functions
+ */
+export async function handleCARApprovalInfoButton(buttonName, screenTag, eventObj, devInterface) {
+  try {
+    const {
+      FormGetField,
+      executeSQL,
+      executeSQLPromise,
+      openScr,
+    } = devInterface;
+
+    // Validate required functions
+    if (!FormGetField || !openScr) {
+      console.error('[Web_HSE] Missing required devInterface functions for CAR Approval Info button');
+      toast.error('System error: Required functions not available');
+      return;
+    }
+
+    const executeSQLAsync = executeSQLPromise || executeSQL;
+    const formTag = screenTag || 'HSE_TGCRAPRVL';
+    const normalizedFormTag = formTag.toUpperCase();
+
+    // C++: Only works on HSE_TGCRAPRVL screen
+    if (normalizedFormTag !== 'HSE_TGCRAPRVL') {
+      console.log('[Web_HSE] CAR Approval Info button on screen:', formTag, '- will try to proceed');
+    }
+
+    // C++: Check policy settings
+    // RQ-2-2024.8, Bugs-2-2024.5
+    let strCARSource = safeFormGetField(FormGetField, formTag, 'CRENTRY_CRSRC') || 
+                      safeFormGetField(FormGetField, 'HSE_TGCRAPRVL', 'CRENTRY_CRSRC') || 
+                      safeFormGetField(FormGetField, 'HSE_CRENTRY', 'CRENTRY_CRSRC') || '';
+    
+    let strEnable_CAR_Approval_Info = 'N';
+    
+    try {
+      const policySql = `SELECT TOP 1 HSEPLC_ADT_CRBSS, HSEPLC_ADT_ENBCRAPPINF FROM HSE_HSEPLC_ADT`;
+      try {
+        const policyResult = await executeSQLAsync(policySql);
+        let policy = null;
+        if (Array.isArray(policyResult)) {
+          policy = policyResult[0];
+        } else if (policyResult?.recordset && policyResult.recordset.length > 0) {
+          policy = policyResult.recordset[0];
+        } else if (policyResult && typeof policyResult === 'object') {
+          policy = policyResult;
+        }
+        
+        if (policy) {
+          const strCARBasis = policy?.HSEPLC_ADT_CRBSS || '';
+          console.log('[Web_HSE] Policy check - CAR Source:', strCARSource, 'CAR Basis:', strCARBasis);
+          if (strCARSource && strCARSource === strCARBasis) {
+            strEnable_CAR_Approval_Info = (policy?.HSEPLC_ADT_ENBCRAPPINF || 'N').toString().toUpperCase();
+            console.log('[Web_HSE] Policy check - Enable CAR Approval Info:', strEnable_CAR_Approval_Info);
+          } else {
+            console.log('[Web_HSE] CAR source does not match policy basis, defaulting to enabled');
+            strEnable_CAR_Approval_Info = 'Y';
+          }
+        } else {
+          console.warn('[Web_HSE] No policy record found, defaulting to enabled');
+          strEnable_CAR_Approval_Info = 'Y';
+        }
+      } catch (policyError) {
+        console.warn('[Web_HSE] Could not read policy settings, defaulting to enabled:', policyError);
+        strEnable_CAR_Approval_Info = 'Y';
+      }
+    } catch (error) {
+      console.warn('[Web_HSE] Error checking policy settings:', error);
+      strEnable_CAR_Approval_Info = 'Y';
+    }
+
+    if (strEnable_CAR_Approval_Info !== 'Y') {
+      toast.warning('According to current System Policy. This function is not allowed');
+      return;
+    }
+
+    // Extract event data to get key field value
+    const { fullRecord: fullRecordArr, fullRecordArrKeys } = eventObj || {};
+    
+    // Get key field value (CAR primary key)
+    let keyFieldValue = '';
+    if (fullRecordArrKeys && fullRecordArrKeys.length > 0) {
+      keyFieldValue = fullRecordArrKeys[0].toString();
+    } else if (fullRecordArr && fullRecordArr.length > 0) {
+      const firstRecord = Array.isArray(fullRecordArr) ? fullRecordArr[0] : fullRecordArr;
+      keyFieldValue = firstRecord?.PRMKY || firstRecord?.CRENTRY_PRMKY || '';
+    }
+
+    // Fallback: read from form
+    if (!keyFieldValue) {
+      keyFieldValue = safeFormGetField(FormGetField, formTag, 'PRMKY') || 
+                     safeFormGetField(FormGetField, 'HSE_TGCRAPRVL', 'PRMKY') || 
+                     safeFormGetField(FormGetField, 'HSE_CRENTRY', 'PRMKY') ||
+                     safeFormGetField(FormGetField, formTag, 'CRENTRY_PRMKY') || '';
+    }
+
+    if (!keyFieldValue) {
+      toast.warning('Unable to find CAR record. Please select a record first.');
+      return;
+    }
+
+    // C++: Approve("CRCTVEACCENT-AP",strPrimKey);
+    // Opens HSE_TgCrApprvlInf screen with module type "CRCTVEACCENT-AP"
+    const moduleType = 'CRCTVEACCENT-AP';
+    const carApprovalInfoScreenTag = 'HSE_TgCrApprvlInf';
+    
+    // C++: strCriteria.Format("SELECT * FROM HSE_CrApprvlInf WHERE (CrApprvlInf_LnkWthMn= %s) AND (CrApprvlInf_MdlTyp= '%s')",strKeyField,strSourceModule);
+    const criteria = `SELECT * FROM HSE_CrApprvlInf WHERE (CrApprvlInf_LnkWthMn = ${keyFieldValue}) AND (CrApprvlInf_MdlTyp = '${moduleType.replace(/'/g, "''")}')`;
+    
+    // C++: strDefValues.Format("CrApprvlInf_LnkWthMn|%s|CrApprvlInf_MdlTyp|%s",strKeyField,strSourceModule);
+    const defValObj = {
+      CrApprvlInf_LnkWthMn: keyFieldValue,
+      CrApprvlInf_MdlTyp: moduleType,
+    };
+
+    console.log('[Web_HSE] Opening CAR Approval Info screen:', {
+      screenTag: carApprovalInfoScreenTag,
+      carKey: keyFieldValue,
+      moduleType: moduleType,
+    });
+
+    // C++: ShowScreen(0,"HSE_CrApprvlInf","CAR Approve Info",NORMAL_MODE,true,strCriteria,"",strDefValues,"",bLocked);
+    // bLocked = false for CAR_APPROVAL_INFO button (allows editing)
+    openScr(carApprovalInfoScreenTag, {}, criteria, 'edit', true, defValObj, false);
+  } catch (error) {
+    console.error('[Web_HSE] Error in handleCARApprovalInfoButton:', error);
+    toast.error('An error occurred while opening CAR Approval Info screen');
+  }
+}
+
+/**
+ * Handle Approve CAR button click
+ * RQ_HSM_01_01_26_16_11: Approve CAR
+ * Implements the logic from NewCarEntryCategory::ApproveCARProcess2
+ * 
+ * C++ Reference:
+ * - NewCarEntryCategory.cpp line 960-1029: ApproveCARProcess2() function
+ * 
+ * @param {string} buttonName - The button name (e.g. APPROVE_CAR)
+ * @param {string} screenTag - The screen tag (e.g. HSE_TGCRAPRVL)
+ * @param {Object} eventObj - The full event object
+ * @param {Object} devInterface - Object containing devInterface functions
+ */
+export async function handleApproveCARButton(buttonName, screenTag, eventObj, devInterface) {
+  try {
+    const {
+      FormGetField,
+      FormSetField,
+      executeSQL,
+      executeSQLPromise,
+      getUserName,
+      refreshData,
+      doToolbarAction,
+    } = devInterface;
+
+    // Validate required functions
+    if (
+      !FormGetField ||
+      !FormSetField ||
+      (!executeSQL && !executeSQLPromise) ||
+      !getUserName ||
+      !refreshData ||
+      !doToolbarAction
+    ) {
+      console.error('[Web_HSE] Missing required devInterface functions for Approve CAR button');
+      toast.error('System error: Required functions not available');
+      return;
+    }
+
+    const executeSQLAsync = executeSQLPromise || executeSQL;
+    const formTag = screenTag || 'HSE_TGCRAPRVL';
+
+    // Extract event data
+    const { fullRecord: fullRecordArr, fullRecordArrKeys } = eventObj || {};
+
+    // Get key field value (CAR primary key)
+    let keyFieldValue = '';
+    if (fullRecordArrKeys && fullRecordArrKeys.length > 0) {
+      keyFieldValue = fullRecordArrKeys[0].toString();
+    } else if (fullRecordArr && fullRecordArr.length > 0) {
+      const firstRecord = Array.isArray(fullRecordArr) ? fullRecordArr[0] : fullRecordArr;
+      keyFieldValue = firstRecord?.PRMKY || firstRecord?.CRENTRY_PRMKY || '';
+    }
+
+    // Fallback: read from form
+    if (!keyFieldValue) {
+      keyFieldValue = safeFormGetField(FormGetField, formTag, 'PRMKY') || 
+                     safeFormGetField(FormGetField, 'HSE_TGCRAPRVL', 'PRMKY') || 
+                     safeFormGetField(FormGetField, 'HSE_CRENTRY', 'PRMKY') ||
+                     safeFormGetField(FormGetField, formTag, 'CRENTRY_PRMKY') || '';
+    }
+
+    if (!keyFieldValue) {
+      toast.warning('Unable to find CAR record. Please select a record first.');
+      return;
+    }
+
+    // C++: Check if CAR Approval Info exists (if policy requires it)
+    // RQ-2-2024.8, Bugs-2-2024.5
+    let bUpdateApprovedRecord = true;
+    let strEnable_CAR_Approval_Info = 'N';
+    
+    const strCARSource = safeFormGetField(FormGetField, formTag, 'CRENTRY_CRSRC') || 
+                        safeFormGetField(FormGetField, 'HSE_TGCRAPRVL', 'CRENTRY_CRSRC') || 
+                        safeFormGetField(FormGetField, 'HSE_CRENTRY', 'CRENTRY_CRSRC') || '';
+
+    // Check policy settings
+    try {
+      const policySql = `SELECT TOP 1 HSEPLC_ADT_CRBSS, HSEPLC_ADT_ENBCRAPPINF FROM HSE_HSEPLC_ADT`;
+      try {
+        const policyResult = await executeSQLAsync(policySql);
+        let policy = null;
+        if (Array.isArray(policyResult)) {
+          policy = policyResult[0];
+        } else if (policyResult?.recordset && policyResult.recordset.length > 0) {
+          policy = policyResult.recordset[0];
+        } else if (policyResult && typeof policyResult === 'object') {
+          policy = policyResult;
+        }
+        
+        if (policy) {
+          const strCARBasis = policy?.HSEPLC_ADT_CRBSS || '';
+          if (strCARSource && strCARSource === strCARBasis) {
+            strEnable_CAR_Approval_Info = (policy?.HSEPLC_ADT_ENBCRAPPINF || 'N').toString().toUpperCase();
+          }
+        }
+      } catch (policyError) {
+        console.warn('[Web_HSE] Could not read policy settings:', policyError);
+      }
+    } catch (error) {
+      console.warn('[Web_HSE] Error checking policy settings:', error);
+    }
+
+    // C++: if (strEnable_CAR_Approval_Info=="Y")
+    if (strEnable_CAR_Approval_Info === 'Y') {
+      // C++: Check if CAR Approval Info record exists
+      // C++: strSql.Format("update HSE_CRAPPRVLINF set CRAPPRVLINF_LnkWthMn=CRAPPRVLINF_LnkWthMn where CRAPPRVLINF_LnkWthMn=%s",KeyFieldValue);
+      const checkApprovalInfoSql = `UPDATE HSE_CRAPPRVLINF SET CRAPPRVLINF_LnkWthMn=CRAPPRVLINF_LnkWthMn WHERE CRAPPRVLINF_LnkWthMn=${keyFieldValue}`;
+      try {
+        const result = await executeSQLAsync(checkApprovalInfoSql);
+        const rowsAffected = result?.rowsAffected?.[0] || result?.rowsAffected || 0;
+        bUpdateApprovedRecord = rowsAffected === 1;
+      } catch (error) {
+        console.warn('[Web_HSE] Error checking CAR Approval Info:', error);
+        bUpdateApprovedRecord = false;
+      }
+    }
+
+    if (bUpdateApprovedRecord) {
+      // C++: InsertIntoTracingTabProcess(pCustomButtonClicked,strStatus,strSourceScreenName);
+      const strSourceScreenName = 'CAR Approval';
+      const strStatus = 'CAR Approved';
+      const userName = getUserName() || '';
+      
+      // Status '15' = CAR Approved
+      const insertTracingSql = `EXECUTE ChangeEntityStatus '${keyFieldValue.toString().replace(/'/g, "''")}','${strSourceScreenName.replace(/'/g, "''")}','${userName.replace(/'/g, "''")}','HSE_CRENTRY_','CRENTRY_CRSTT','PRMKEY','15','${strStatus.replace(/'/g, "''")}'`;
+      
+      console.log('[Web_HSE] Inserting tracing record for CAR Approved:', insertTracingSql);
+      await executeSQLAsync(insertTracingSql);
+
+      // C++: FormSetField(strFormTag,"CRENTRY_CRSTT","15");
+      FormSetField(formTag, 'CRENTRY_CRSTT', '15');
+
+      // C++: Get Concerned Department and Project from CAR Approval Info
+      // C++: FormSetField(strFormTag,"CRENTRY_CNCDPR",gstrCncrnDprt);
+      // C++: FormSetField(strFormTag,"CRENTRY_PRJ",gstrProject);
+      // Note: In web, we need to query these values from HSE_CRAPPRVLINF table
+      try {
+        const approvalInfoSql = `SELECT TOP 1 CRAPPRVLINF_CNCDPR, CRAPPRVLINF_RLTPRJ FROM HSE_CRAPPRVLINF WHERE CRAPPRVLINF_LnkWthMn = ${keyFieldValue}`;
+        const approvalInfoResult = await executeSQLAsync(approvalInfoSql);
+        if (approvalInfoResult && approvalInfoResult.length > 0 && approvalInfoResult[0]) {
+          const approvalInfo = approvalInfoResult[0];
+          const concernedDept = approvalInfo.CRAPPRVLINF_CNCDPR || approvalInfo.CrApprvlInf_Cncdpr || '';
+          const project = approvalInfo.CRAPPRVLINF_RLTPRJ || approvalInfo.CrApprvlInf_Rltprj || '';
+          
+          if (concernedDept) {
+            FormSetField(formTag, 'CRENTRY_CNCDPR', concernedDept);
+          }
+          if (project) {
+            FormSetField(formTag, 'CRENTRY_PRJ', project);
+          }
+        }
+      } catch (error) {
+        console.warn('[Web_HSE] Could not retrieve Concerned Department and Project from CAR Approval Info:', error);
+      }
+
+      // C++: DoToolBarAction(TOOLBAR_SAVE,strFormTag,"");
+      // Update the status field directly in the database to ensure it's saved
+      const updateStatusSql = `UPDATE dbo.HSE_CRENTRY SET CRENTRY_CRSTT = '15' WHERE PrmKy = ${keyFieldValue}`;
+      console.log('[Web_HSE] Updating CAR status to 15 (Approved):', updateStatusSql);
+      await executeSQLAsync(updateStatusSql);
+      console.log('[Web_HSE] ✓ CAR status updated successfully');
+
+      // C++: RefreshScreen("",REFRESH_SELECTED);
+      refreshData('', 'REFRESH_SELECTED');
+      
+      toast.success('CAR approved successfully');
+    } else {
+      // C++: AfxMessageBox("Please insert a CAR Approval Information");
+      toast.warning('Please insert a CAR Approval Information');
+    }
+  } catch (error) {
+    console.error('[Web_HSE] Error in handleApproveCARButton:', error);
+    toast.error('An error occurred while processing the Approve CAR action');
   }
 }
 

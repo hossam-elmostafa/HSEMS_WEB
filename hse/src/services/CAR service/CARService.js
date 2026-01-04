@@ -9,9 +9,15 @@ import {
   handleCARReviewInfoButton,
   handleAcceptCARButton,
   handleViewSourceTXNButton,
+  handleCancelCARButton,
+  handleRejectReasonOkButtonForCancelCAR,
+  handleCARApprovalInfoButton,
+  handleApproveCARButton,
   setPendingRejectCAR,
   clearPendingRejectCAR,
   hasPendingRejectCAR,
+  hasPendingCancelCAR,
+  clearPendingCancelCAR,
 } from './CARButtonHandlers';
 
 // Re-export for backward compatibility
@@ -110,8 +116,13 @@ export function sendButtonClickToBackend(buttonName, screenTag, eventObj = {}, d
   // Handle reject reason screen OK button (this is part of CAR module flow)
   // Check both possible screen tag casings: HSE_TGRJCTRSN (uppercase) or HSE_TGRjctRsn (mixed case from config)
   if ((normalizedScreenTag === 'HSE_TGRJCTRSN' || normalizedScreenTag === 'HSE_TGRJCTRSN') && normalizedButton === 'RJCTRSN_BTN_OK') {
-    // Check if this is for CAR (pendingRejectCAR exists) vs Observation (pendingRejectObservation exists)
-    // We need to check which one is pending - this is a simple check
+    // Check if this is for Cancel CAR (has higher priority since it uses the same reject reason flow)
+    if (hasPendingCancelCAR()) {
+      console.log('[Web_HSE] ✓ Reject reason screen OK button (RJCTRSN_BTN_OK) clicked for Cancel CAR!');
+      handleRejectReasonOkButtonForCancelCAR(devInterface);
+      return; // Don't process further
+    }
+    // Check if this is for Reject CAR (pendingRejectCAR exists) vs Observation (pendingRejectObservation exists)
     if (hasPendingRejectCAR()) {
       console.log('[Web_HSE] ✓ Reject reason screen OK button (RJCTRSN_BTN_OK) clicked for CAR!');
       handleRejectReasonOkButtonForCAR(devInterface);
@@ -124,7 +135,13 @@ export function sendButtonClickToBackend(buttonName, screenTag, eventObj = {}, d
   // C++: CRejectReason::DisplayCustomButtonClicked - handles RJCTRSN_BTN_CANCEL
   // Check both possible screen tag casings: HSE_TGRJCTRSN (uppercase) or HSE_TGRjctRsn (mixed case)
   if ((normalizedScreenTag === 'HSE_TGRJCTRSN' || normalizedScreenTag === 'HSE_TGRJCTRSN') && normalizedButton === 'RJCTRSN_BTN_CANCEL') {
-    // Check if this is for CAR
+    // Check if this is for Cancel CAR
+    if (hasPendingCancelCAR()) {
+      console.log('[Web_HSE] Reject reason screen Cancel button clicked for Cancel CAR. Clearing pending cancellation.');
+      clearPendingCancelCAR();
+      return; // Don't process further
+    }
+    // Check if this is for Reject CAR
     if (hasPendingRejectCAR()) {
       console.log('[Web_HSE] Reject reason screen Cancel button clicked for CAR. Clearing pending rejection.');
       clearPendingRejectCAR();
@@ -192,6 +209,25 @@ export function sendButtonClickToBackend(buttonName, screenTag, eventObj = {}, d
            normalizedButton.includes('VIEW_REJECT_REASON')) {
     console.log('[Web_HSE] ✓ View Reject Reason button matched:', normalizedButton);
     handleViewRejectReasonButton(buttonName, screenTag, eventObj, devInterface);
+  }
+  // Handle Cancel CAR button
+  else if (normalizedButton === 'CANCEL_CAR' || 
+           normalizedButton === 'CANCELCAR') {
+    console.log('[Web_HSE] ✓ Cancel CAR button matched:', normalizedButton);
+    handleCancelCARButton(buttonName, screenTag, eventObj, devInterface);
+  }
+  // Handle CAR Approval Info button
+  else if (normalizedButton === 'CAR_APPROVAL_INFO' || 
+           normalizedButton === 'CAR_APPROVALINFO' ||
+           normalizedButton.includes('CAR_APPROVAL_INFO')) {
+    console.log('[Web_HSE] ✓ CAR Approval Info button matched:', normalizedButton);
+    handleCARApprovalInfoButton(buttonName, screenTag, eventObj, devInterface);
+  }
+  // Handle Approve CAR button
+  else if (normalizedButton === 'APPROVE_CAR' || 
+           normalizedButton === 'APPROVECAR') {
+    console.log('[Web_HSE] ✓ Approve CAR button matched:', normalizedButton);
+    handleApproveCARButton(buttonName, screenTag, eventObj, devInterface);
   } else {
     // Other buttons are not handled
     console.log('[Web_HSE Debug] CAR Button not handled. Button name:', normalizedButton);
