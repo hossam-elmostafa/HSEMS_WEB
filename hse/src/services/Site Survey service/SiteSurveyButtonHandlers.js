@@ -50,6 +50,9 @@ export function hasPendingRejectSiteSurvey() {
 /**
  * Handle Entry Completed button click for Site Survey Entry
  * 
+ * Requirement:
+ * - RQ_HSM_HSE_05_01_26_10_20.7: Entry Completed
+ * 
  * This function implements the "Entry Completed" functionality for Site Survey Entry screen.
  * When the user clicks the "Entry Completed" button, it:
  * 1. Validates that a record has been saved (selected)
@@ -481,6 +484,9 @@ export async function handleConfirmSiteSurveyButton(buttonName, screenTag, event
 
 /**
  * Handle Reject button click for Site Survey
+ * 
+ * Requirement:
+ * - RQ_HSM_HSE_05_01_26_13_58.7.2: Reject
  * 
  * This function implements the "Reject" functionality for Site Survey screens (Confirmation and Follow-up).
  * When the user clicks the "Reject" button, it:
