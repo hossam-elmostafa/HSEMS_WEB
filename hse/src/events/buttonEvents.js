@@ -2,6 +2,8 @@ import { sendButtonClickToBackend as sendObservationButtonClick, isObservationTa
 import { sendButtonClickToBackend as sendCARButtonClick } from '../services/CAR service/CARService';
 import { handleIncidentButtonClick } from '../services/Incident service/IncidentService';
 import { handleSiteSurveyButtonClick } from '../services/Site Survey service/SiteSurveyService';
+import { handleAspectsRegisterButtonClick } from '../services/Aspects Register service/AspectsRegisterService';
+import { sendButtonClickToBackend as sendChemicalRegisterButtonClick } from '../services/chemical register service/ChemicalRegisterService';
 import { OBSERVATION_SCREEN_TAGS } from '../config/constants';
 
 // Module-level variable to store devInterface functions
@@ -112,9 +114,13 @@ export function ButtonClicked(eventObj) {
       fullRecordArrKeys,
     } = eventObj || {};
     
-    // Normalize screen tag
+    // Keep original screen tag for services that need it (they'll normalize internally)
+    const originalScreenTag = strScrTag ? strScrTag.toString() : '';
+    
+    // Normalize screen tag for services that expect uppercase
+    let normalizedScreenTag = '';
     if (strScrTag) {
-      strScrTag = strScrTag.toString().toUpperCase();
+      normalizedScreenTag = strScrTag.toString().toUpperCase();
     }
     
     // Extract and normalize button name
@@ -124,19 +130,28 @@ export function ButtonClicked(eventObj) {
       
       // Handle CAR module buttons first (if applicable)
       // This is a generalized handler - business logic is in CARService.js
-      sendCARButtonClick(normalizedButtonName, strScrTag, eventObj, devInterfaceObj);
+      sendCARButtonClick(normalizedButtonName, normalizedScreenTag, eventObj, devInterfaceObj);
       
       // Handle Observation module buttons with devInterface access
       // This is a generalized handler - business logic is in ObservationService.js
-      sendObservationButtonClick(normalizedButtonName, strScrTag, eventObj, devInterfaceObj);
+      sendObservationButtonClick(normalizedButtonName, normalizedScreenTag, eventObj, devInterfaceObj);
       
       // Handle Incident module buttons with devInterface access
       // This is a generalized handler - business logic is in IncidentService.js
-      handleIncidentButtonClick(normalizedButtonName, strScrTag, eventObj, devInterfaceObj);
+      handleIncidentButtonClick(normalizedButtonName, normalizedScreenTag, eventObj, devInterfaceObj);
       
       // Handle Site Survey module buttons with devInterface access
       // This is a generalized handler - business logic is in SiteSurveyService.js
-      handleSiteSurveyButtonClick(normalizedButtonName, strScrTag, eventObj, devInterfaceObj);
+      handleSiteSurveyButtonClick(normalizedButtonName, normalizedScreenTag, eventObj, devInterfaceObj);
+      
+      // Handle Aspects Register module buttons with devInterface access
+      // This is a generalized handler - business logic is in AspectsRegisterService.js
+      handleAspectsRegisterButtonClick(normalizedButtonName, normalizedScreenTag, eventObj, devInterfaceObj);
+      
+      // Handle Chemical Register module buttons with devInterface access
+      // Pass original screen tag to preserve case for matching
+      // This is a generalized handler - business logic is in ChemicalRegisterService.js
+      sendChemicalRegisterButtonClick(normalizedButtonName, originalScreenTag, eventObj, devInterfaceObj);
     }
 
     // Any additional button-specific logic can go here

@@ -699,3 +699,124 @@ export async function handleRejectReasonOkButtonForSiteSurvey(devInterface) {
   }
 }
 
+/**
+ * Handle Required Actions button click for Site Survey Findings tab
+ * 
+ * Requirement:
+ * - RQ_HSM_HSE_05_01_26_10_20.3.1: Required Actions
+ * - RQ_HSM_05_01_26_13_39: Implement Custom Buttons
+ * 
+ * This function implements the "Required Actions" button functionality for Site Survey Entry Findings tab.
+ * When the user clicks the "Required Actions" button, it:
+ * 1. Gets the MAINLINK from the Findings table (HSE_SITSRVYENTFNDNG)
+ * 2. Opens the Required Actions screen (HSE_TGSITSRVYRQRDACTN) with:
+ *    - SQL query to fetch required actions linked to the finding
+ *    - Default values including the link field and transaction status
+ *    - Appropriate lock status based on the source screen
+ * 
+ * C++ Reference: SitSrvyCategory.cpp line 148-177: SITSRVYRQRDACTN_RQRDACTNBTN button handler
+ * 
+ * @param {string} buttonName - The button name (e.g. SITSRVYRQRDACTN_RQRDACTNBTN)
+ * @param {string} screenTag - The screen tag (e.g. HSE_TgSitSrvyEnt, HSE_TgSitSrvyCnfrmtn, HSE_TgSitSrvyInq)
+ * @param {Object} eventObj - The full event object containing fullRecord, strTabTag, etc.
+ * @param {Object} devInterface - Object containing devInterface functions (FormGetField, openScr, etc.)
+ * 
+ * @example
+ * // Called when user clicks "Required Actions" button on Site Survey Entry Findings tab
+ * await handleRequiredActionsButton('SITSRVYRQRDACTN_RQRDACTNBTN', 'HSE_TgSitSrvyEnt', eventObj, devInterface);
+ */
+export async function handleRequiredActionsButton(buttonName, screenTag, eventObj, devInterface) {
+  try {
+    const {
+      FormGetField,
+      openScr,
+    } = devInterface;
+
+    // Validate required functions
+    if (!FormGetField || !openScr) {
+      console.error('[Web_HSE] Missing required devInterface functions for Required Actions button');
+      toast.error('System error: Required functions not available');
+      return;
+    }
+
+    // C++: CString strKeyField=FormGetField("HSE_SITSRVYENTFNDNG","MAINLINK");
+    // Get the MAINLINK from the Findings table
+    const strKeyField = safeFormGetField(FormGetField, 'HSE_SITSRVYENTFNDNG', 'MAINLINK') ||
+                        safeFormGetField(FormGetField, 'HSE_SitSrvyEntFndng', 'MAINLINK') ||
+                        safeFormGetField(FormGetField, 'HSE_SITSRVYENTFNDNG', 'SitSrvyEntFndng_LNK') ||
+                        '';
+
+    if (!strKeyField || strKeyField.trim() === '' || strKeyField === 'undefined' || strKeyField === 'null') {
+      toast.warning('Please select a finding first to view required actions.');
+      return;
+    }
+
+    // C++: strSQL.Format("SELECT * FROM HSE_SITSRVYRQRDACTN WHERE (SITSRVYRQRDACTN_LNK = '%s')",strKeyField);
+    const strSQL = `SELECT * FROM HSE_SITSRVYRQRDACTN WHERE (SITSRVYRQRDACTN_LNK = '${strKeyField.replace(/'/g, "''")}')`;
+
+    // Determine screen lock status and transaction status based on form tag
+    // C++: if(strForm_Tag == "HSE_TGSITSRVYENT" || strForm_Tag == "HSE_TGSITSRVYCNFRMTN" || strForm_Tag == "HSE_TGSITSRVYINQ")
+    const normalizedFormTag = (screenTag || '').toString().toUpperCase();
+    let bLocked = true; // Default to locked
+    let strDefSrcScr = ''; // Transaction status default value
+
+    if (normalizedFormTag === 'HSE_TGSITSRVYENT' || 
+        normalizedFormTag === 'HSE_TGSITSRVYCNFRMTN' || 
+        normalizedFormTag === 'HSE_TGSITSRVYINQ') {
+      // C++: if(strForm_Tag != "HSE_TGSITSRVYINQ") { bLocked = false; }
+      if (normalizedFormTag !== 'HSE_TGSITSRVYINQ') {
+        bLocked = false;
+      }
+    }
+
+    // C++: if(strForm_Tag == "HSE_TGSITSRVYENT") { strDefSrcScr.Format("TXNSTS|%s","1"); }
+    // C++: else if (strForm_Tag == "HSE_TGSITSRVYCNFRMTN") { strDefSrcScr.Format("TXNSTS|%s","4"); }
+    if (normalizedFormTag === 'HSE_TGSITSRVYENT') {
+      strDefSrcScr = 'TXNSTS|1';
+    } else if (normalizedFormTag === 'HSE_TGSITSRVYCNFRMTN') {
+      strDefSrcScr = 'TXNSTS|4';
+    }
+
+    // C++: strDefValues.Format("SITSRVYRQRDACTN_LNK|%s|%s",strKeyField,strDefSrcScr);
+    // Build default values object
+    const defValObj = {
+      SITSRVYRQRDACTN_LNK: strKeyField,
+    };
+    
+    // Add transaction status if available
+    if (strDefSrcScr) {
+      const txnStatusMatch = strDefSrcScr.match(/TXNSTS\|(\d+)/);
+      if (txnStatusMatch) {
+        defValObj.TXNSTS = txnStatusMatch[1];
+      }
+    }    // C++: bool blocked=false;
+    // C++: if(strForm_Tag=="HSE_TGSITSRVYINQ") blocked=true;
+    const blocked = normalizedFormTag === 'HSE_TGSITSRVYINQ';
+
+    // C++: ShowScreen(0,"HSE_TGSITSRVYRQRDACTN","Required Actions",NORMAL_MODE,true,strSQL,"",strDefValues,"",blocked);
+    const requiredActionsScreenTag = 'HSE_TGSITSRVYRQRDACTN';
+    const screenCaption = 'Required Actions';
+
+    console.log('[Web_HSE] Opening Required Actions screen:', {
+      screenTag: requiredActionsScreenTag,
+      findingLink: strKeyField,
+      locked: bLocked,
+      blocked: blocked,
+      transactionStatus: strDefSrcScr,
+    });
+
+    // Open the Required Actions screen
+    // Parameters: (screenTag, defaultValues, criteria, mode, locked, blocked)
+    openScr(
+      requiredActionsScreenTag,
+      defValObj,
+      strSQL,
+      'edit',
+      bLocked,
+      blocked
+    );    console.log('[Web_HSE] ✓ Required Actions screen opened successfully');
+  } catch (error) {
+    console.error('[Web_HSE] Error in handleRequiredActionsButton:', error);
+    toast.error('An error occurred while opening the Required Actions screen');
+  }
+}

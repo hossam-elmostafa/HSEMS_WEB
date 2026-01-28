@@ -5,6 +5,7 @@ import {
   handleRejectSiteSurveyButton,
   handleRejectReasonOkButtonForSiteSurvey,
   hasPendingRejectSiteSurvey,
+  handleRequiredActionsButton,
 } from './SiteSurveyButtonHandlers';
 
 /**
@@ -85,6 +86,14 @@ export async function handleSiteSurveyButtonClick(buttonName, screenTag, eventOb
       }
     }
 
+    // Required Actions button (Findings tab)
+    // C++ Reference: SitSrvyCategory.cpp line 148: SITSRVYRQRDACTN_RQRDACTNBTN
+    // RQ_HSM_HSE_05_01_26_10_20.3.1: Required Actions
+    if (normalizedButtonName === 'SITSRVYRQRDACTN_RQRDACTNBTN' || normalizedButtonName === 'REQUIRED_ACTIONS') {
+      await handleRequiredActionsButton(buttonName, screenTag, eventObj, devInterface);
+      return true;
+    }
+
     // Button not handled by this service
     console.log('[Web_HSE] Button not handled by Site Survey service:', buttonName);
     return false;
@@ -110,7 +119,7 @@ export function initializeSiteSurveyService() {
   
   isInitialized = true;
   // Only log a simple message to reduce console spam
-  console.log('[Web_HSE] Site Survey Service initialized - 4 buttons supported (Entry Completed, Close, Confirm, Reject)');
+  console.log('[Web_HSE] Site Survey Service initialized - 5 buttons supported (Entry Completed, Close, Confirm, Reject, Required Actions)');
 }
 
 export default {

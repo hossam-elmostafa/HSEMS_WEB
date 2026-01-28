@@ -54,6 +54,14 @@ export const CAR_SCREEN_TAGS = [
   'HSE_TGCARMODELBAS',       // CAR Model Basis
 ];
 
+// Chemical Register screen tags - screens that belong to the Chemical Register module
+export const CHEMICAL_REGISTER_SCREEN_TAGS = [
+  'HSE_CHMCLRGSTR',          // Chemical Register (table name - uppercase)
+  'HSE_TGCHMCLRGSTR',        // Chemical Register (screen tag - uppercase)
+  'HSE_ChmclRgstr',          // Chemical Register (alternative tag format from menu - mixed case)
+  'HSE_ChmclRgstr'.toUpperCase(), // Also include uppercase version
+];
+
 // Messages object for internationalization (placeholder)
 export const messages = {
   // Add message keys here as needed
