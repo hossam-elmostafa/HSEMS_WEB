@@ -3,6 +3,7 @@ import { CHEMICAL_REGISTER_SCREEN_TAGS } from '../../config/constants';
 // Import button handlers from ChemicalRegisterButtonHandlers
 import {
   handleViewAllActiveItemsButton,
+  handleViewAllInActiveItemsButton,
 } from './ChemicalRegisterButtonHandlers';
 
 /**
@@ -97,6 +98,17 @@ export function sendButtonClickToBackend(buttonName, screenTag, eventObj = {}, d
     // The handler will determine the correct Chemical Register screen tag to use
     const actualScreenTag = eventObj?.strScrTag || screenTag || 'HSE_ChmclRgstr';
     handleViewAllActiveItemsButton(buttonName, actualScreenTag, eventObj, devInterface);
+  }
+  // Handle buttons: View All In-Active Items
+  // Button ID: VIEW_ALL_IN-ACTIVE_ITEMS (note the hyphen)
+  // RQ_HSM_27_01_26_22_57.04: View All In-Active Items
+  // This button should work on all screens, not just Chemical Register screens
+  else if (normalizedButton === 'VIEW_ALL_IN-ACTIVE_ITEMS' || normalizedButton === 'VIEW_ALL_INACTIVE_ITEMS') {
+    console.log('[Web_HSE] ✓ View All In-Active Items button matched:', normalizedButton);
+    // Pass the screen tag from eventObj if available, or use the provided screenTag
+    // The handler will determine the correct Chemical Register screen tag to use
+    const actualScreenTag = eventObj?.strScrTag || screenTag || 'HSE_ChmclRgstr';
+    handleViewAllInActiveItemsButton(buttonName, actualScreenTag, eventObj, devInterface);
   } else {
     // Other buttons are not handled
     console.log('[Web_HSE] Chemical Register Button not handled. Button name:', normalizedButton);
