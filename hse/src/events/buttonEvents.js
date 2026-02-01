@@ -37,6 +37,57 @@ export function setDevInterface(devInterface) {
  * 
  * C++: NearMissEntryCategory::DisplayRecordRepostion() when iComplete==1
  */
+/**
+ * Replace undefined in an object with null so server never receives string 'undefined' in SQL.
+ * Prevents "Invalid column name 'undefined'" when saving.
+ */
+function sanitizeUndefinedToNull(obj) {
+  if (obj === undefined) return null;
+  if (obj === null || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(sanitizeUndefinedToNull);
+  const out = {};
+  for (const key of Object.keys(obj)) {
+    const v = obj[key];
+    out[key] = v === undefined ? null : (typeof v === 'object' && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype ? sanitizeUndefinedToNull(v) : v);
+  }
+  return out;
+}
+
+/**
+ * Ensure QTY Card tab fullRecord has Serial set or null (never undefined) before save.
+ * C++ auto-generates Serial in DisplayFieldChange when empty; web prevents undefined in payload.
+ */
+async function ensureQtyCardSerialBeforeSave(eventObj, devInterface) {
+  const { fullRecord, strTabTag } = eventObj || {};
+  if (!strTabTag || !strTabTag.toUpperCase().includes('QTYCRD')) return eventObj;
+  const rec = fullRecord;
+  if (!rec || typeof rec !== 'object') return eventObj;
+  const serialKeys = ['CHMCLRGSTR_QTYCRD_SRLN', 'CHMCLRGSTR_QtyCrd_SrlN', 'CHMCLRGSTR_QTYCRD_SrlN'];
+  let hasSerial = false;
+  for (const k of serialKeys) {
+    const v = rec[k];
+    if (v !== undefined && v !== null && String(v).trim() !== '') {
+      hasSerial = true;
+      break;
+    }
+  }
+  if (!hasSerial && devInterface && devInterface.getScrNxtSegmentPromise) {
+    try {
+      const nextVal = await devInterface.getScrNxtSegmentPromise('tab', 'CHMCLRGSTR_QTYCRD_SRLN');
+      if (nextVal !== undefined && nextVal !== null && String(nextVal).trim() !== '') {
+        rec.CHMCLRGSTR_QTYCRD_SRLN = nextVal;
+        rec.CHMCLRGSTR_QtyCrd_SrlN = nextVal;
+      }
+    } catch (e) {
+      console.warn('[Web_HSE] getScrNxtSegmentPromise for QTY Card Serial failed:', e);
+    }
+  }
+  for (const k of serialKeys) {
+    if (rec[k] === undefined) rec[k] = null;
+  }
+  return eventObj;
+}
+
 export async function toolBarButtonClicked(eventObj, callBackFn) {
   let { fullRecord, isNewMode, strBtnName, strScrTag, strTabTag, complete } = eventObj;
   strScrTag = strScrTag ? strScrTag.toString().toUpperCase() : '';
@@ -44,6 +95,14 @@ export async function toolBarButtonClicked(eventObj, callBackFn) {
   strTabTag = strTabTag ? strTabTag.toString().toUpperCase() : '';
   
   try {
+    // Before save (complete === 0): prevent "Invalid column name 'undefined'" for QTY Card and sanitize fullRecord
+    if (complete === 0 && strBtnName === 'SAVE' && fullRecord) {
+      if (strTabTag && strTabTag.includes('QTYCRD')) {
+        await ensureQtyCardSerialBeforeSave(eventObj, devInterfaceObj);
+      }
+      eventObj.fullRecord = sanitizeUndefinedToNull(fullRecord);
+    }
+
     // C++: if(pRecordRepostion->iComplete==1) - handle tab enabling after save
     // complete: 0 -> before event, 1 -> after event
     if (complete === 1) {

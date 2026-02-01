@@ -9,11 +9,13 @@ import { toast } from "react-toastify";
  * - RQ_HSM_27_01_26_22_57.03: View All Active Items
  * - RQ_HSM_27_01_26_22_57.04: View All In-Active Items
  * - RQ_HSM_27_01_26_22_57.05: View Department Items
+ * - RQ_HSM_27_01_26_22_57.12: Update (QTY Card)
  * 
  * C++ Reference:
  * - ChemicalRegisterCategory.cpp line 74-75: VIEW_ALL_ACTIVE_ITEMS button handler
  * - ChemicalRegisterCategory.cpp line 76-77: VIEW_ALL_IN-ACTIVE_ITEMS button handler
  * - ChemicalRegisterCategory.cpp line 78-80: VIEW_DEPARTMENT_ITEMS button handler
+ * - ChemicalRegisterCategory.cpp line 82-84: UPDT on HSE_CHMCLRGSTR_QTYCRD calls UpdateQuantities()
  */
 
 /**
@@ -69,10 +71,11 @@ function getFieldFromFullRecord(fullRecord, fieldName) {
       const keyUpper = key.toUpperCase();
       const keyLower = key.toLowerCase();
       
-      // Match exact uppercase or lowercase
+      // Match exact uppercase or lowercase (include 0 as valid for numeric fields)
       if (keyUpper === fieldNameUpper || keyLower === fieldNameLower) {
         const value = record[key];
-        if (value !== undefined && value !== null && value !== '') {
+        if (value !== undefined && value !== null) {
+          if (typeof value === 'object' && !Array.isArray(value)) return ''; // caller may use getValueFromRecordByKeyPattern for objects
           return String(value);
         }
       }
@@ -80,6 +83,88 @@ function getFieldFromFullRecord(fullRecord, fieldName) {
   }
   
   return '';
+}
+
+/**
+ * Get a value from a record by finding a key that contains any of the given substrings (case-insensitive).
+ * Used when exact field names are unknown (e.g. server returns different casing).
+ * @param {Object|Array} fullRecord - The full record object or array
+ * @param {string[]} keySubstrings - Array of substrings to match in key (e.g. ['SRLN', 'SERIAL'])
+ * @returns {string|number|undefined} The first non-null value found, or undefined
+ */
+function getValueFromRecordByKeyPattern(fullRecord, keySubstrings) {
+  if (!fullRecord || !Array.isArray(keySubstrings) || keySubstrings.length === 0) return undefined;
+  const record = Array.isArray(fullRecord) ? fullRecord[0] : fullRecord;
+  if (!record || typeof record !== 'object') return undefined;
+  const subs = keySubstrings.map(s => s.toUpperCase());
+  for (const key in record) {
+    if (!record.hasOwnProperty(key)) continue;
+    const keyUpper = key.toUpperCase();
+    if (!subs.some(s => keyUpper.includes(s))) continue;
+    const v = record[key];
+    if (v === undefined || v === null) continue;
+    if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+      if ('key' in v && (v.key !== undefined && v.key !== null)) return v.key;
+      if ('value' in v && (v.value !== undefined && v.value !== null)) return v.value;
+    }
+    return v;
+  }
+  return undefined;
+}
+
+/**
+ * Get field value from a row with uppercase-key normalization (matches framework getFldValFrmRow).
+ * selectedTabRow/record may have mixed-case keys; FormGetField looks up with uppercase field name.
+ * @param {Object} row - Single record object
+ * @param {string} fieldName - Field name (will be uppercased for lookup)
+ * @returns {*} Value or undefined
+ */
+function getFieldFromRowNormalized(row, fieldName) {
+  if (!row || typeof row !== 'object' || !fieldName) return undefined;
+  const keyUpper = String(fieldName).toUpperCase();
+  const normalized = {};
+  for (const key in row) {
+    if (!Object.prototype.hasOwnProperty.call(row, key)) continue;
+    normalized[key.toUpperCase()] = row[key];
+  }
+  const v = normalized[keyUpper];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+    if (v.key !== undefined && v.key !== null) return v.key;
+    if (v.value !== undefined && v.value !== null) return v.value;
+  }
+  return v;
+}
+
+/**
+ * Get first non-empty or numeric value from record for keys matching any of the substrings.
+ * Use when the first matching key might have an empty string and another matching key has the value.
+ */
+function getFirstNonEmptyFromRecordByKeyPattern(fullRecord, keySubstrings) {
+  if (!fullRecord || !Array.isArray(keySubstrings) || keySubstrings.length === 0) return undefined;
+  const record = Array.isArray(fullRecord) ? fullRecord[0] : fullRecord;
+  if (!record || typeof record !== 'object') return undefined;
+  const subs = keySubstrings.map(s => s.toUpperCase());
+  let fallback;
+  for (const key in record) {
+    if (!record.hasOwnProperty(key)) continue;
+    const keyUpper = key.toUpperCase();
+    if (!subs.some(s => keyUpper.includes(s))) continue;
+    const v = record[key];
+    if (v === undefined || v === null) continue;
+    let scalar = v;
+    if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+      if ('key' in v && (v.key !== undefined && v.key !== null)) scalar = v.key;
+      else if ('value' in v && (v.value !== undefined && v.value !== null)) scalar = v.value;
+      else continue;
+    }
+    const s = String(scalar).trim();
+    if (s !== '' || (typeof scalar === 'number' && !Number.isNaN(scalar))) {
+      return scalar;
+    }
+    if (fallback === undefined) fallback = scalar;
+  }
+  return fallback;
 }
 
 /**
@@ -583,5 +668,298 @@ export async function handleViewDepartmentItemsButton(buttonName, screenTag, eve
   } catch (error) {
     console.error('[Web_HSE] Error in handleViewDepartmentItemsButton:', error);
     toast.error('An error occurred while filtering department items: ' + (error.message || 'Unknown error'));
+  }
+}
+
+/** QTY Card tab tag - Update button only applies on this tab */
+const QTY_CARD_TAB_TAG = 'HSE_CHMCLRGSTR_QTYCRD';
+const CHEMICAL_REGISTER_FORM_TAG = 'HSE_CHMCLRGSTR';
+
+/**
+ * Handle Update (UPDT) button click on QTY Card tab
+ * RQ_HSM_27_01_26_22_57.12: Update - Chemical Register QTY Card Custom Buttons
+ * Implements ChemicalRegisterCategory::UpdateQuantities() from DisplayCustomButtonClicked when strSubFormTag==HSE_CHMCLRGSTR_QTYCRD && strButtonName==UPDT
+ *
+ * C++ Reference:
+ * - ChemicalRegisterCategory.cpp line 82-84: else if(strSubFormTag=="HSE_CHMCLRGSTR_QTYCRD" && strButtonName=="UPDT") { UpdateQuantities(); }
+ * - ChemicalRegisterCategory.cpp line 109-137: UpdateQuantities() - if QOH Before empty: save tab, then exec Chemical_Register_Update_Qty; else message "This record was already used to update"
+ *
+ * @param {string} buttonName - The button name (UPDT)
+ * @param {string} screenTag - The screen tag
+ * @param {Object} eventObj - The full event object (strTabTag must be HSE_CHMCLRGSTR_QTYCRD)
+ * @param {Object} devInterface - Object containing FormGetField, doToolbarAction, executeSQLPromise, refreshData
+ */
+export async function handleQtyCardUpdateButton(buttonName, screenTag, eventObj, devInterface) {
+  try {
+    const strTabTag = (eventObj?.strTabTag || '').toString();
+    const tabTagUpper = strTabTag.toUpperCase();
+    if (tabTagUpper !== QTY_CARD_TAB_TAG && !tabTagUpper.includes('QTYCRD')) {
+      console.log('[Web_HSE] QTY Card Update button ignored - not on QTY Card tab. strTabTag:', strTabTag);
+      return;
+    }
+
+    console.log('[Web_HSE] ===== QTY Card Update (UPDT) Button Handler =====');
+    toast.info('Updating quantities...');
+
+    const {
+      FormGetField,
+      doToolbarAction,
+      executeSQLPromise,
+      executeSQL,
+      refreshData,
+    } = devInterface;
+
+    const executeSQLAsync = executeSQLPromise || executeSQL;
+    if (!FormGetField || !executeSQLAsync) {
+      console.error('[Web_HSE] Missing FormGetField or executeSQL for QTY Card Update');
+      toast.error('System error: Required functions not available');
+      return;
+    }
+
+    const tabTag = tabTagUpper === QTY_CARD_TAB_TAG ? strTabTag : QTY_CARD_TAB_TAG;
+    const formTag = CHEMICAL_REGISTER_FORM_TAG;
+
+    // C++: strQtyBfr = FormGetField("HSE_CHMCLRGSTR_QTYCRD","CHMCLRGSTR_QTYCRD_QHBFR");
+    const strQtyBfr = safeFormGetField(FormGetField, tabTag, 'CHMCLRGSTR_QTYCRD_QHBFR', 'tab')
+      || safeFormGetField(FormGetField, tabTag, 'CHMCLRGSTR_QTYCRD_QHBFR', 'scr');
+
+    if (strQtyBfr !== undefined && strQtyBfr !== null && String(strQtyBfr).trim() !== '') {
+      toast.warning('This record was already used to update');
+      return;
+    }
+
+    // Helper: get a value from form or from fullRecord (tab row)
+    const fromForm = (tag, fld, scrType) => safeFormGetField(FormGetField, tag, fld, scrType);
+    const fromRecord = (rec, fld) => getFieldFromFullRecord(rec, fld);
+    const fromRecordByPattern = (rec, subs) => getValueFromRecordByKeyPattern(rec, subs);
+    const fromRecordByPatternNonEmpty = (rec, subs) => getFirstNonEmptyFromRecordByKeyPattern(rec, subs);
+    // Tab row may have mixed-case keys; normalize to uppercase like framework getFldValFrmRow
+    const fromRowNormalized = (row, fld) => (row ? getFieldFromRowNormalized(row, fld) : undefined);
+
+    // Prefer reading from fullRecord first (selected tab row when button clicked) before any save
+    const tabRow = Array.isArray(eventObj?.fullRecord) ? eventObj.fullRecord[0] : eventObj?.fullRecord;
+    const altRow = Array.isArray(eventObj?.allSelectedRecords) ? eventObj.allSelectedRecords[0] : eventObj?.allSelectedRecords;
+    const anyRow = tabRow || altRow;
+    // Detail table/tab can be mixed case (e.g. HSE_CHMCLRGSTR_QtyCrd) - try both
+    const tblNam = (eventObj?.strTblNam || tabTag || '').toString();
+
+    let strMasterPK = fromRecord(eventObj?.fullRecord, 'CHMCLRGSTR_prmryKy')
+      || fromRecord(eventObj?.fullRecord, 'ChmclRgstr_PrmryKy')
+      || fromRecord(eventObj?.allSelectedRecords, 'CHMCLRGSTR_prmryKy')
+      || fromRecordByPattern(eventObj?.fullRecord, ['PRMRYKY', 'PRMRY_KY', 'CHMCLRGSTR_PRM'])
+      || fromForm(formTag, 'CHMCLRGSTR_prmryKy', 'scr')
+      || fromForm(formTag, 'ChmclRgstr_PrmryKy', 'scr');
+
+    let strTxnType = fromRecord(eventObj?.fullRecord, 'CHMCLRGSTR_QTYCRD_TXNTYP')
+      || fromRecord(eventObj?.allSelectedRecords, 'CHMCLRGSTR_QTYCRD_TXNTYP')
+      || fromRecordByPattern(eventObj?.fullRecord, ['TXNTYP', 'TXN_TYP'])
+      || fromForm(tabTag, 'CHMCLRGSTR_QTYCRD_TXNTYP', 'tab')
+      || fromForm(tabTag, 'CHMCLRGSTR_QTYCRD_TXNTYP', 'scr');
+
+    // C++ uses CHMCLRGSTR_QtyCrd_SrlN; screen JSON HSE_CHMCLRGSTR_QtyCrd.json uses DataFieldName CHMCLRGSTR_QTYCRD_SRLN
+    const serialFieldNames = [
+      'CHMCLRGSTR_QTYCRD_SRLN',
+      'CHMCLRGSTR_QtyCrd_SrlN',
+      'CHMCLRGSTR_QTYCRD_SrlN',
+      'HSE_CHMCLRGSTR_QtyCrd_SrlN',
+      'HSE_CHMCLRGSTR_QTYCRD_SrlN',
+      (tblNam ? tblNam + '_SrlN' : ''),
+      (tblNam ? tblNam + '_SRLN' : ''),
+      'SrlN',
+      'SRLN',
+      'SerialNo',
+      'SERIAL_NO',
+      'LineNo',
+      'LINE_NO',
+    ].filter(Boolean);
+    const txnQtyFieldNames = ['CHMCLRGSTR_QtyCrd_TxnQty', 'CHMCLRGSTR_QTYCRD_TxnQty', 'CHMCLRGSTR_QTYCRD_TXNQTY'];
+    let strDtlSrial = '';
+    let strTxnQty = '';
+    for (const f of serialFieldNames) {
+      const v = fromRecord(eventObj?.fullRecord, f) || fromRecord(eventObj?.allSelectedRecords, f)
+        || fromRowNormalized(anyRow, f)
+        || fromForm(tabTag, f, 'tab') || fromForm(tabTag, f, 'scr');
+      if (v !== undefined && v !== null && (String(v).trim() !== '' || (typeof v === 'number' && !Number.isNaN(v)))) {
+        strDtlSrial = v;
+        break;
+      }
+    }
+    if (!strDtlSrial && anyRow) {
+      const v = fromRecordByPatternNonEmpty(eventObj?.fullRecord, ['SRLN', 'SRIN', 'SERIAL', 'LINENO', 'SRL']);
+      if (v !== undefined && v !== null) strDtlSrial = v;
+    }
+    if (!strDtlSrial && anyRow) {
+      const v = fromRecordByPattern(eventObj?.fullRecord, ['SRLN', 'SRIN', 'SERIAL', 'LINENO', 'SRL']);
+      if (v !== undefined && v !== null) strDtlSrial = v;
+    }
+    // Fallback: scan all keys in tab row for anything that looks like serial/line (server may use different names)
+    if (!strDtlSrial && anyRow && typeof anyRow === 'object') {
+      const serialLike = ['SRL', 'SERIAL', 'LINE', 'SRIN', 'LINENO'];
+      for (const key of Object.keys(anyRow)) {
+        const keyUpper = key.toUpperCase();
+        if (keyUpper.includes('TXNQTY') || keyUpper.includes('TXN_TYP')) continue;
+        if (!serialLike.some(s => keyUpper.includes(s))) continue;
+        const v = anyRow[key];
+        if (v === undefined || v === null) continue;
+        const scalar = typeof v === 'object' && v !== null && !Array.isArray(v)
+          ? (v.key !== undefined && v.key !== null ? v.key : (v.value !== undefined && v.value !== null ? v.value : null))
+          : v;
+        if (scalar === null) continue;
+        const s = String(scalar).trim();
+        if (s !== '' || (typeof scalar === 'number' && !Number.isNaN(scalar))) {
+          strDtlSrial = scalar;
+          break;
+        }
+      }
+    }
+    for (const f of txnQtyFieldNames) {
+      const v = fromRecord(eventObj?.fullRecord, f) || fromRecord(eventObj?.allSelectedRecords, f)
+        || fromForm(tabTag, f, 'tab') || fromForm(tabTag, f, 'scr');
+      if (v !== undefined && v !== null && String(v).trim() !== '') {
+        strTxnQty = v;
+        break;
+      }
+    }
+    if (!strTxnQty && anyRow) {
+      const v = fromRecordByPattern(eventObj?.fullRecord, ['TXNQTY', 'TXN_QTY', 'TxnQty']);
+      if (v !== undefined && v !== null) strTxnQty = v;
+    }
+
+    // If we're missing Serial, TxnQty, or MasterPK: save then read from form (C++ flow).
+    // Serial can be empty in fullRecord (e.g. auto-generated) but present in form after save.
+    if (!strDtlSrial || !strTxnQty || !strMasterPK) {
+      if (doToolbarAction) {
+        doToolbarAction('SAVE', formTag, tabTag);
+      }
+      const delays = [400, 600, 900];
+      for (const delayMs of delays) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        if (!strMasterPK) {
+          strMasterPK = fromForm(formTag, 'CHMCLRGSTR_prmryKy', 'scr')
+            || fromForm(formTag, 'ChmclRgstr_PrmryKy', 'scr');
+        }
+        if (!strTxnType) {
+          strTxnType = fromForm(tabTag, 'CHMCLRGSTR_QTYCRD_TXNTYP', 'tab')
+            || fromForm(tabTag, 'CHMCLRGSTR_QTYCRD_TXNTYP', 'scr');
+        }
+        for (const f of serialFieldNames) {
+          const v = fromForm(tabTag, f, 'tab') || fromForm(tabTag, f, 'scr');
+          if (v !== undefined && v !== null && (String(v).trim() !== '' || (typeof v === 'number' && !Number.isNaN(v)))) {
+            strDtlSrial = strDtlSrial || v;
+            break;
+          }
+        }
+        for (const f of txnQtyFieldNames) {
+          const v = fromForm(tabTag, f, 'tab') || fromForm(tabTag, f, 'scr');
+          if (v !== undefined && v !== null && String(v).trim() !== '') {
+            strTxnQty = strTxnQty || v;
+            break;
+          }
+        }
+        if (strDtlSrial && strTxnQty && strMasterPK) break;
+      }
+    }
+
+    // Last resort: use first numeric value in tab row from a key that looks like serial/line (not QOH/TxnQty)
+    if (!strDtlSrial && anyRow && typeof anyRow === 'object') {
+      const serialKeyHints = ['SRL', 'SERIAL', 'LINE', 'SRIN', 'LINENO', 'SRN'];
+      for (const key of Object.keys(anyRow)) {
+        const keyUpper = key.toUpperCase();
+        if (keyUpper.includes('TXNQTY') || keyUpper.includes('QHBFR') || keyUpper.includes('QHAFT')) continue;
+        if (!serialKeyHints.some(h => keyUpper.includes(h))) continue;
+        const v = anyRow[key];
+        if (v === undefined || v === null) continue;
+        const n = typeof v === 'number' ? v : (typeof v === 'object' && v && (v.key !== undefined || v.value !== undefined) ? (v.key !== undefined && v.key !== null ? Number(v.key) : Number(v.value)) : NaN);
+        if (Number.isFinite(n) && n >= 0) {
+          strDtlSrial = n;
+          break;
+        }
+        const s = String(v).trim();
+        if (s !== '' && !Number.isNaN(Number(s)) && Number(s) >= 0) {
+          strDtlSrial = s;
+          break;
+        }
+      }
+    }
+
+    // Reject missing or literal "undefined" / "null" (never send these to SQL)
+    const safeStr = (v) => (v === undefined || v === null ? '' : String(v).trim());
+    const masterPKStr = safeStr(strMasterPK);
+    if (!masterPKStr || masterPKStr.toLowerCase() === 'undefined' || masterPKStr.toLowerCase() === 'null') {
+      toast.warning('Missing master key. Please save the record and try again.');
+      return;
+    }
+
+    // Normalize value from form/fullRecord (may be object e.g. { key, value } for combo)
+    const toScalar = (v) => {
+      if (v === undefined || v === null) return '';
+      if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+        if ('key' in v && v.key !== undefined && v.key !== null) return String(v.key);
+        if ('value' in v && v.value !== undefined && v.value !== null) return String(v.value);
+      }
+      return String(v);
+    };
+    // Parse numeric values: accept number, string number, or string with commas/spaces
+    const parseSerial = (v) => {
+      const s = toScalar(v).replace(/,/g, '').trim();
+      if (s === '' || s.toLowerCase() === 'undefined' || s.toLowerCase() === 'null') return NaN;
+      const n = parseInt(s, 10);
+      return Number.isNaN(n) ? parseFloat(s) : n;
+    };
+    const parseTxnQty = (v) => {
+      const s = toScalar(v).replace(/,/g, '').trim();
+      if (s === '' || s.toLowerCase() === 'undefined' || s.toLowerCase() === 'null') return NaN;
+      return parseFloat(s);
+    };
+    const serialNum = parseSerial(strDtlSrial);
+    const txnQtyNum = parseTxnQty(strTxnQty);
+
+    if (Number.isNaN(serialNum) || Number.isNaN(txnQtyNum)) {
+      const rec = anyRow || (Array.isArray(eventObj?.fullRecord) ? eventObj.fullRecord[0] : eventObj?.fullRecord);
+      const keys = rec && typeof rec === 'object' ? Object.keys(rec) : [];
+      const keyValues = rec && typeof rec === 'object' ? keys.reduce((acc, k) => {
+        const v = rec[k];
+        acc[k] = typeof v === 'object' && v && !Array.isArray(v) ? (v.key ?? v.value ?? v) : v;
+        return acc;
+      }, {}) : {};
+      console.warn('[Web_HSE] QTY Card Update: Serial or TxnQty missing/invalid.', {
+        strDtlSrial,
+        strTxnQty,
+        masterPK: !!strMasterPK,
+        tabRowKeys: keys,
+        tabRowKeyValues: keyValues,
+        hasFullRecord: !!eventObj?.fullRecord,
+      });
+      toast.warning('Serial and Transaction Qty are required. Please select a QTY Card row and ensure both fields have values, then try again.');
+      return;
+    }
+
+    const txnTypeFlag = (strTxnType === '1' || String(strTxnType).toUpperCase() === 'TRUE') ? 1 : 0;
+    const masterPKEscaped = masterPKStr.replace(/'/g, "''");
+    // Ensure no parameter is undefined/NaN when building SQL (prevents "Invalid column name 'undefined'" from DB)
+    const serialParam = Number.isFinite(serialNum) ? serialNum : 0;
+    const txnQtyParam = Number.isFinite(txnQtyNum) ? txnQtyNum : 0;
+    const sql = `exec Chemical_Register_Update_Qty '${masterPKEscaped}',${serialParam},${txnQtyParam},${txnTypeFlag}`;
+
+    try {
+      await executeSQLAsync(sql);
+      toast.success('Quantities updated successfully');
+      if (refreshData) {
+        setTimeout(() => refreshData('', 'REFRESH_ALL'), 200);
+      }
+    } catch (err) {
+      console.error('[Web_HSE] Chemical_Register_Update_Qty failed:', err);
+      toast.error('Failed to update quantities: ' + (err?.message || 'Unknown error'));
+      if (refreshData) {
+        try {
+          refreshData('', 'REFRESH_ALL');
+        } catch (e) {
+          console.warn('[Web_HSE] Refresh after error failed:', e);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[Web_HSE] Error in handleQtyCardUpdateButton:', error);
+    toast.error('An error occurred while updating quantities: ' + (error?.message || 'Unknown error'));
   }
 }

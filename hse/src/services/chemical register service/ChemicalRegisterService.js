@@ -5,6 +5,7 @@ import {
   handleViewAllActiveItemsButton,
   handleViewAllInActiveItemsButton,
   handleViewDepartmentItemsButton,
+  handleQtyCardUpdateButton,
 } from './ChemicalRegisterButtonHandlers';
 
 /**
@@ -121,6 +122,17 @@ export function sendButtonClickToBackend(buttonName, screenTag, eventObj = {}, d
     // The handler will determine the correct Chemical Register screen tag to use
     const actualScreenTag = eventObj?.strScrTag || screenTag || 'HSE_ChmclRgstr';
     handleViewDepartmentItemsButton(buttonName, actualScreenTag, eventObj, devInterface);
+  }
+  // RQ_HSM_27_01_26_22_57.12: Update - QTY Card Custom Button (only when on QTY Card tab)
+  else if (normalizedButton === 'UPDT') {
+    const strTabTag = (eventObj?.strTabTag || '').toString().toUpperCase();
+    if (strTabTag.includes('QTYCRD')) {
+      console.log('[Web_HSE] ✓ QTY Card Update (UPDT) button matched:', normalizedButton);
+      const actualScreenTag = eventObj?.strScrTag || screenTag || 'HSE_ChmclRgstr';
+      handleQtyCardUpdateButton(buttonName, actualScreenTag, eventObj, devInterface);
+    } else {
+      console.log('[Web_HSE] Chemical Register Button not handled. Button name:', normalizedButton);
+    }
   } else {
     // Other buttons are not handled
     console.log('[Web_HSE] Chemical Register Button not handled. Button name:', normalizedButton);
