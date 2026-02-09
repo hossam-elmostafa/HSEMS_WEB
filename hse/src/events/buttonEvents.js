@@ -4,6 +4,7 @@ import { handleIncidentButtonClick } from '../services/Incident service/Incident
 import { handleSiteSurveyButtonClick } from '../services/Site Survey service/SiteSurveyService';
 import { handleAspectsRegisterButtonClick } from '../services/Aspects Register service/AspectsRegisterService';
 import { sendButtonClickToBackend as sendChemicalRegisterButtonClick } from '../services/chemical register service/ChemicalRegisterService';
+import { sendButtonClickToBackend as sendAuditPlanInquiryButtonClick } from '../services/Audit Plan Inquiry service/AuditPlanInquiryService';
 import { OBSERVATION_SCREEN_TAGS } from '../config/constants';
 
 // Module-level variable to store devInterface functions
@@ -211,6 +212,10 @@ export function ButtonClicked(eventObj) {
       // Pass original screen tag to preserve case for matching
       // This is a generalized handler - business logic is in ChemicalRegisterService.js
       sendChemicalRegisterButtonClick(normalizedButtonName, originalScreenTag, eventObj, devInterfaceObj);
+
+      // Handle Audit Plan Inquiry main screen custom buttons (View All, View Approved, etc.)
+      // TableName: HSE_TgAdtPlnInq, TrueTableName: HSE_AdtPlnEnt - logic in AuditPlanInquiryService.js
+      sendAuditPlanInquiryButtonClick(normalizedButtonName, normalizedScreenTag, eventObj, devInterfaceObj);
     }
 
     // Any additional button-specific logic can go here

@@ -54,6 +54,12 @@ export const CAR_SCREEN_TAGS = [
   'HSE_TGCARMODELBAS',       // CAR Model Basis
 ];
 
+// Audit Plan Inquiry main screen (TableName: HSE_TgAdtPlnInq, TrueTableName: HSE_AdtPlnEnt)
+export const AUDIT_PLAN_INQUIRY_SCREEN_TAGS = [
+  'HSE_TGADTPLNINQ',
+  'HSE_TgAdtPlnInq',
+];
+
 // Chemical Register screen tags - screens that belong to the Chemical Register module
 export const CHEMICAL_REGISTER_SCREEN_TAGS = [
   'HSE_CHMCLRGSTR',          // Chemical Register (table name - uppercase)
