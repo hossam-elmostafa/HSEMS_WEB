@@ -1,5 +1,7 @@
 import {
   handleEntryCompletedButton,
+  handleViewCurrentMonthButton,
+  handleViewHistoryButton,
 } from './AspectsRegisterButtonHandlers';
 
 /**
@@ -11,6 +13,8 @@ import {
  * Button Mappings (based on C++ code):
  * - ENTRY_COMPLETED: Entry Completed button (EnvrnmntAspctCategory.cpp)
  *   - When clicked, completes the aspects entry by executing EnvAspctEntryComplete stored procedure
+ * - VIEW_CURRENT_MONTH: View Current Month button (EnvrnmntAspctCategory.cpp line 140)
+ *   - When clicked, updates criteria to show only records for current month (ASPCTS_YR, ASPCTS_MNTH)
  * 
  * Requirements:
  * - RQ_HSM_22_01_26_10_36.03: Aspects Register
@@ -18,6 +22,10 @@ import {
  * - RQ_HSM_22_01_26_10_37.01: Aspects Entry Custom Buttons
  * - RQ_HSM_22_01_26_10_37.02: Entry Completed
  *   Custom Button ID: ENTRY_COMPLETED
+ * - RQ_HSM_27_01_26_22_56.02: View Current Month
+ *   Custom Button ID: VIEW_CURRENT_MONTH
+ * - RQ_HSM_27_01_26_22_56.03: View History (all history; admin: all depts, non-admin: user's dept(s))
+ *   Custom Button ID: VIEW_HISTORY
  */
 
 /**
@@ -57,6 +65,20 @@ export async function handleAspectsRegisterButtonClick(buttonName, screenTag, ev
       return true;
     }
 
+    // View Current Month button (Aspects Entry)
+    // C++ Reference: EnvrnmntAspctCategory.cpp line 140: VIEW_CURRENT_MONTH
+    if (normalizedButtonName === 'VIEW_CURRENT_MONTH') {
+      await handleViewCurrentMonthButton(buttonName, screenTag, eventObj, devInterface);
+      return true;
+    }
+
+    // View History button (RQ_HSM_27_01_26_22_56.03) - all history, admin vs non-admin department filter
+    // C++ Reference: EnvrnmntAspctCategory.cpp lines 131-139: VIEW_HISTORY
+    if (normalizedButtonName === 'VIEW_HISTORY') {
+      await handleViewHistoryButton(buttonName, screenTag, eventObj, devInterface);
+      return true;
+    }
+
     // Button not handled by this service
     console.log('[Web_HSE] Button not handled by Aspects Register service:', buttonName);
     return false;
@@ -82,7 +104,7 @@ export function initializeAspectsRegisterService() {
   
   isInitialized = true;
   // Only log a simple message to reduce console spam
-  console.log('[Web_HSE] Aspects Register Service initialized - 1 button supported (Entry Completed)');
+  console.log('[Web_HSE] Aspects Register Service initialized - 3 buttons (Entry Completed, View Current Month, View History)');
 }
 
 export default {

@@ -46,7 +46,7 @@ export async function mapUnknownFieldTypes(strScrTag, strTabTag, devInterface) {
           ...otherProps,
         });
 
-        console.log(`[Web_HSE] Mapped field ${fieldName} from UNKNOWN to ${type}`);
+        console.debug(`[Web_HSE] Mapped field ${fieldName} from UNKNOWN to ${type}`);
       } catch (error) {
         console.warn(`[Web_HSE] Error mapping field ${fieldName}:`, error);
       }

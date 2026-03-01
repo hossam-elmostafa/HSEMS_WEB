@@ -56,7 +56,8 @@ export async function beforeRenderAppMenu(menuObj) {
  */
 export async function beforeRenderCustomActions(userObj, tag, actionsList) {    
   let disabledCustomActionIDs = [];
-  tag = tag.toString().toUpperCase();
+  tag = (tag != null && tag !== undefined) ? String(tag).toUpperCase() : '';
+  if (!actionsList || !Array.isArray(actionsList)) return actionsList || [];
 
   // TODO : add any custom action you want to disable to disabledCustomActionIDs array 'based on your application logic'
   // ex : if I want to disable action with ID:action_1 then I will write this code
