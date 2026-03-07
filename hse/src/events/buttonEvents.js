@@ -1,8 +1,16 @@
 import { sendButtonClickToBackend, isObservationTabsEnabled, manageObservationTabs, manageCommentsTabToolBar } from '../services/Observation service/ObservationService';
 import { OBSERVATION_SCREEN_TAGS } from '../config/constants';
+import { getScreenHandler } from '../screenHandlers/index';
 
 // Module-level variable to store devInterface functions
 let devInterfaceObj = {};
+
+/**
+ * Map of screen tags that are currently in "new" mode (C++ m_ScreensInNewMode).
+ * Keys: screen tag (e.g. strScrTag), values: "true".
+ * Use setbNewMode() to update; read via ScreensInNewMode[strScrTag] or hasScreenInNewMode(strScrTag).
+ */
+export const ScreensInNewMode = Object.create(null);
 
 /**
  * Set devInterface functions for ButtonClicked handler
@@ -12,6 +20,84 @@ export function setDevInterface(devInterface) {
   devInterfaceObj = devInterface || {};
 }
 
+/**
+ * Mark a screen as in new mode or not (C++ setbNewMode / m_ScreensInNewMode).
+ * @param {string} strFormTag - Screen tag (header form tag)
+ * @param {boolean} isNewMode - true to set, false to clear
+ */
+function setbNewMode(strFormTag, isNewMode) {
+  if (isNewMode) {
+    ScreensInNewMode[strFormTag] = 'true';
+  } else {
+    delete ScreensInNewMode[strFormTag];
+  }
+}
+
+/**
+ * Check if a screen is in new mode.
+ * @param {string} strScrTag - Screen tag
+ * @returns {boolean}
+ */
+export function hasScreenInNewMode(strScrTag) {
+  return strScrTag != null && ScreensInNewMode[strScrTag] === 'true';
+}
+
+/** Screen tags that require GenerateTXNNo on SAVE when record was in new mode (C++ list). */
+const SCREEN_TAGS_REQUIRING_TXN_NO = [
+  'HSE_TGRSKASSMNTENT',
+  'HSE_TGPERFMSRMNTENT',
+  'HSE_TGACDNTENT',
+  'HSE_TGNRSTMISCENT',
+  'HSE_TGPTWSRGSTRENT',
+  'HSE_TGCRCTVEACCENT',
+  'HSE_TGSITSRVYENT',
+  'HSE_TGINCDNTFLSHRPRT'
+];
+
+/**
+ * Get key field value for TXN number generation (C++ getTXNKeyFldVal).
+ * @param {string} strFormTag - Screen/form tag
+ * @returns {string} Key field value or ''
+ */
+function getTXNKeyFldVal(strFormTag) {
+  const { FormGetField } = devInterfaceObj;
+  if (!FormGetField || !strFormTag) return '';
+  const tag = strFormTag.toUpperCase();
+  const map = {
+    'HSE_TGRSKASSMNTENT': { table: 'HSE_RSKASSMNTENT', keyFld: 'RSKASSMNTENT_ASSMNTNO' },
+    'HSE_TGPTNLHZRDENT': { table: 'HSE_PTNLHZRDENT', keyFld: 'PTNLHZRDENT_PTNLHZRDNO' },
+    'HSE_TGPERFMSRMNTENT': { table: 'HSE_PERFMSRMNTENT', keyFld: 'PERFMSRMNTENT_VSTNO' },
+    'HSE_TGACDNTENT': { table: 'HSE_ACDNTENT', keyFld: 'ACDNTENT_ACDNTNUM' },
+    'HSE_TGPTWSRGSTRENT': { table: 'HSE_PTWSRGSTRENT', keyFld: 'PTWSRGSTRENT_PTWSNUM' },
+    'HSE_TGCRCTVEACCENT': { table: 'HSE_CRCTVEACCENT', keyFld: 'CRCTVEACCENT_CARMODELNUM' },
+    'HSE_TGNRSTMISCENT': { table: 'HSE_vwNRSTMISCENT', keyFld: 'NRSTMISCENT_NRSTMISCNUM' },
+    'HSE_TGSITSRVYENT': { table: 'HSE_SITSRVYENT', keyFld: 'SITSRVYENT_SITSRVYNO' },
+    'HSE_TGINCDNTFLSHRPRT': { table: 'HSE_INCDNTFLSHRPRT', keyFld: 'MAINLINK' }
+  };
+  const entry = map[tag];
+  if (!entry) return '';
+  const val = FormGetField(entry.table, entry.keyFld,'scr');
+  return val != null ? String(val) : '';
+}
+
+/**
+ * Generate TXN number for a screen after save (C++ GenerateTXNNo).
+ * Executes generateNewTXNNum stored procedure then refreshes screen.
+ * @param {string} strFormTag - Screen tag
+ */
+async function generateTXNNo(strFormTag) {
+  const strKeyFldVal = getTXNKeyFldVal(strFormTag);
+  if (!strFormTag || !strKeyFldVal) return;
+  const { executeSQLPromise, refreshData } = devInterfaceObj;
+  if (!executeSQLPromise) return;
+  try {
+    const strSQL = `EXECUTE generateNewTXNNum '${strFormTag}',${strKeyFldVal}`;
+    await executeSQLPromise(strSQL);
+    if (typeof refreshData === 'function') refreshData('');
+  } catch (err) {
+    console.warn('[Web_HSE] GenerateTXNNo failed:', err);
+  }
+}
 /**
  * toolBarButtonClicked
  * @param {Object} eventObj 
@@ -37,18 +123,38 @@ export async function toolBarButtonClicked(eventObj, callBackFn) {
   strScrTag = strScrTag ? strScrTag.toString().toUpperCase() : '';
   strBtnName = strBtnName ? strBtnName.toString().toUpperCase() : '';
   strTabTag = strTabTag ? strTabTag.toString().toUpperCase() : '';
-  
+
+  const screenHandler = getScreenHandler(strScrTag);
+  let observationTabsHandledByHandler = false;
+  if (screenHandler && typeof screenHandler.toolBarButtonClicked === 'function') {
+    eventObj.devInterfaceObj = devInterfaceObj;
+    await screenHandler.toolBarButtonClicked(eventObj, callBackFn);
+    observationTabsHandledByHandler = true;
+  }
+
   try {
+    // C++: if(strBtnName=="SAVE" && iComplete==1 && strSubFormTag=="") { getbNewMode(strFormTag); if(bNewRec) GenerateTXNNo(strFormTag); }
+    if (strBtnName === 'SAVE' && complete === 1 && strTabTag === '') {
+      const bNewRec = hasScreenInNewMode(strScrTag);
+      if (bNewRec && SCREEN_TAGS_REQUIRING_TXN_NO.includes(strScrTag)) {
+        await generateTXNNo(strScrTag);
+      }
+      setbNewMode(strScrTag, false);
+    }
+
     // C++: if(pRecordRepostion->iComplete==1) - handle tab enabling after save
     // complete: 0 -> before event, 1 -> after event
     if (complete === 1) {
-      // Check if this is an Observation screen
-      // Use constants and also check for common observation screen patterns
+      if (strBtnName === 'NEW' && complete === 1 && strTabTag === '') {
+        setbNewMode(strScrTag, true);
+      }
+    
+      // Check if this is an Observation screen (skip if handler already ran observation tab logic)
       const isObservationScreen = OBSERVATION_SCREEN_TAGS.some(tag => 
         strScrTag.includes(tag.toUpperCase())
       ) || strScrTag.includes('NRSTMISC') || strScrTag.includes('NERMSENT');
       
-      if (isObservationScreen) {
+      if (isObservationScreen && !observationTabsHandledByHandler) {
         const { executeSQLPromise, TabEnable } = devInterfaceObj;
         
         if (executeSQLPromise && TabEnable) {
@@ -63,7 +169,7 @@ export async function toolBarButtonClicked(eventObj, callBackFn) {
       
       // C++: if(strSubFormTag.Find("CMNT") != -1 && pRecordRepostion->iComplete == 1)
       // Manage Comments tab toolbar when navigating after save
-      if (strTabTag && strTabTag.includes('CMNTS')) {
+      if (strTabTag && strTabTag.includes('CMNTS') && !observationTabsHandledByHandler) {
         manageCommentsTabToolBar(strScrTag, strTabTag, devInterfaceObj);
       }
     }
@@ -71,8 +177,10 @@ export async function toolBarButtonClicked(eventObj, callBackFn) {
     console.warn('[Web_HSE] Error in toolBarButtonClicked tab management:', error);
   }
   
-  // Always call callback to continue normal flow
-  callBackFn(eventObj);
+  // Call callback to continue normal flow (handler already called it when observationTabsHandledByHandler)
+  if (!observationTabsHandledByHandler) {
+    callBackFn(eventObj);
+  }
 }
 
 /**
@@ -108,6 +216,13 @@ export function ButtonClicked(eventObj) {
       strTblNam,
       fullRecordArrKeys,
     } = eventObj || {};
+
+    const screenHandler = getScreenHandler(strScrTag);
+    if (screenHandler && typeof screenHandler.ButtonClicked === 'function') {
+      eventObj.devInterfaceObj = devInterfaceObj;
+      screenHandler.ButtonClicked(eventObj);
+      return;
+    }
     
     // Normalize screen tag
     if (strScrTag) {

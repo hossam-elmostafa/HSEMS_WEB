@@ -1,4 +1,5 @@
 import { applayDisabledTags } from '../utils/menuUtils';
+import { getScreenHandler } from '../screenHandlers/index';
 
 /**
  * @name beforeRenderAppMenu
@@ -80,6 +81,10 @@ export async function beforeRenderCustomActions(userObj, tag, actionsList) {
  * };
  */
 export function onMenuItemClicked(userObj, strScrTag, callBackFn) {
+  const screenHandler = getScreenHandler(strScrTag);
+  if (screenHandler && typeof screenHandler.onMenuItemClicked === 'function') {
+    screenHandler.onMenuItemClicked(userObj, strScrTag, callBackFn);
+  }
   let retVal = {
     isAllowed: true,
     strScrCriteria: "",

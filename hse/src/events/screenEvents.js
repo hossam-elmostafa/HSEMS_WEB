@@ -1,6 +1,7 @@
 import { manageCommentsTabToolBar, isObservationTabsEnabled, manageObservationTabs } from '../services/Observation service/ObservationService';
 import { OBSERVATION_SCREEN_TAGS } from '../config/constants';
 import { mapUnknownFieldTypes } from '../utils/fieldTypeMapper';
+import { getScreenHandler } from '../screenHandlers/index';
 
 // Module-level variable to store devInterface functions
 let devInterfaceObj = {};
@@ -26,7 +27,17 @@ export function setDevInterface(devInterface) {
  * This event doesn't require callback
  */
 export function SubFieldChanged(strScrTag, strTabTag, fieldName, oldFieldVal, fieldVal, updatedAppGlobalVal) {
-  // Empty implementation - can be extended later
+  return new Promise(async (resolve, reject) => {
+    let retObj = {
+      cancel : 0
+    }
+    try {
+      resolve(retObj);
+    } catch (error) {
+      console.error('Error in SubFieldChanged:', error);
+      reject(error);
+    }
+  });
 }
 
 /**
@@ -43,6 +54,10 @@ export function SubFieldChanged(strScrTag, strTabTag, fieldName, oldFieldVal, fi
  * @param {string} strSelectedTabTag tab tag
  */
 export function MainSubReposition(strFormTag, Main_Position, Seleted_Tab, strSelectedTabTag) {
+  const screenHandler = getScreenHandler(strFormTag);
+  if (screenHandler && typeof screenHandler.MainSubReposition === 'function') {
+    screenHandler.MainSubReposition(strFormTag, Main_Position, Seleted_Tab, strSelectedTabTag);
+  }
   try {
     // Normalize tags
     if (strFormTag) {
@@ -99,38 +114,46 @@ export function MainSubReposition(strFormTag, Main_Position, Seleted_Tab, strSel
  * @param {*} strTabTag tab tag
  */
 export async function ShowScreen(setScreenDisableBtn, strScrTag, strTabTag) {
-  setScreenDisableBtn(false, false, false);
-  
-  // Map UNKNOWN field types to appropriate types
-  // This fixes fields like NRSTMISCENT_SGSTDACTNS that come with Type: 'UNKNOWN'
-  try {
-    await mapUnknownFieldTypes(strScrTag, strTabTag, devInterfaceObj);
-  } catch (error) {
-    console.warn('[Web_HSE] Error mapping unknown field types in ShowScreen:', error);
+  const screenHandler = getScreenHandler(strScrTag);
+  let showScreenHandledByHandler = false;
+  if (screenHandler && typeof screenHandler.ShowScreen === 'function') {
+    await screenHandler.ShowScreen(setScreenDisableBtn, strScrTag, strTabTag, devInterfaceObj);
+    showScreenHandledByHandler = true;
   }
-  
-  // Enable observation tabs when screen first loads (not just after save)
-  // Only enable for main screen, not for tabs
-  if (!strTabTag || strTabTag === '') {
+  if (!showScreenHandledByHandler) {
+    setScreenDisableBtn(false, false, false);
+    
+    // Map UNKNOWN field types to appropriate types
+    // This fixes fields like NRSTMISCENT_SGSTDACTNS that come with Type: 'UNKNOWN'
     try {
-      const normalizedScrTag = strScrTag ? strScrTag.toString().toUpperCase() : '';
-      const isObservationScreen = OBSERVATION_SCREEN_TAGS.some(tag => 
-        normalizedScrTag.includes(tag.toUpperCase())
-      ) || normalizedScrTag.includes('NRSTMISC') || normalizedScrTag.includes('NERMSENT');
-      
-      if (isObservationScreen) {
-        const { executeSQLPromise, TabEnable } = devInterfaceObj;
-        
-        if (executeSQLPromise && TabEnable) {
-          // Check if tabs should be enabled
-          const tabsEnabled = await isObservationTabsEnabled(executeSQLPromise, devInterfaceObj.getValFromRecordSet);
-          
-          // Enable/disable tabs based on configuration
-          manageObservationTabs(strScrTag, tabsEnabled, TabEnable);
-        }
-      }
+      await mapUnknownFieldTypes(strScrTag, strTabTag, devInterfaceObj);
     } catch (error) {
-      console.warn('[Web_HSE] Error enabling observation tabs in ShowScreen:', error);
+      console.warn('[Web_HSE] Error mapping unknown field types in ShowScreen:', error);
+    }
+    
+    // Enable observation tabs when screen first loads (not just after save)
+    // Only enable for main screen, not for tabs
+    if (!strTabTag || strTabTag === '') {
+      try {
+        const normalizedScrTag = strScrTag ? strScrTag.toString().toUpperCase() : '';
+        const isObservationScreen = OBSERVATION_SCREEN_TAGS.some(tag => 
+          normalizedScrTag.includes(tag.toUpperCase())
+        ) || normalizedScrTag.includes('NRSTMISC') || normalizedScrTag.includes('NERMSENT');
+        
+        if (isObservationScreen) {
+          const { executeSQLPromise, TabEnable } = devInterfaceObj;
+          
+          if (executeSQLPromise && TabEnable) {
+            // Check if tabs should be enabled
+            const tabsEnabled = await isObservationTabsEnabled(executeSQLPromise, devInterfaceObj.getValFromRecordSet);
+            
+            // Enable/disable tabs based on configuration
+            manageObservationTabs(strScrTag, tabsEnabled, TabEnable);
+          }
+        }
+      } catch (error) {
+        console.warn('[Web_HSE] Error enabling observation tabs in ShowScreen:', error);
+      }
     }
   }
 }
