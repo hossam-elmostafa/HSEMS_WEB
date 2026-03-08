@@ -12,11 +12,28 @@ import {
 } from '../../services/Observation service/ObservationService.js';
 import { mapUnknownFieldTypes } from '../../utils/fieldTypeMapper.js';
 
+const OBS_INQ_SCREEN = 'HSE_TgNrstMiscInq';
+const OBS_FIELD = 'NRSTMISCENT_RECSTS';
+const OBS_FILTERS = {
+  NRSTMISCENT_VWINCMP: `WHERE (${OBS_FIELD}=1)`,
+  NRSTMISCENT_VWRJCT: `WHERE (${OBS_FIELD}=3)`,
+  NRSTMISCENT_VWCMPLT: `WHERE (${OBS_FIELD}=4)`,
+  NRSTMISCENT_VWCNFRM: `WHERE (${OBS_FIELD}=5)`,
+  NRSTMISCENT_VWCLSD: `WHERE (${OBS_FIELD}=6)`,
+  NRSTMISCENT_VWALL: '',
+};
+
 export function ButtonClicked(eventObj) {
   const { Button_Name, strScrTag } = eventObj || {};
   const devInterface = eventObj.devInterfaceObj || {};
   const buttonName = Button_Name ? Button_Name.toString().toUpperCase() : '';
   const screenTag = strScrTag ? strScrTag.toString().toUpperCase() : '';
+  const criteria = OBS_FILTERS[buttonName];
+  if (criteria !== undefined && devInterface?.ChangeCriteria && devInterface?.refreshData) {
+    devInterface.ChangeCriteria(OBS_INQ_SCREEN, '', criteria);
+    devInterface.refreshData('');
+    return;
+  }
   sendButtonClickToBackend(buttonName, screenTag, eventObj, devInterface);
 }
 

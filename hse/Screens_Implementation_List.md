@@ -36,8 +36,30 @@ Handler paths follow the HSE menu structure (see `Webinfra.Server/AppMenus/HSE.j
 | HSE_TGNrMisTypes | `Setup/Observations/Observation_Type.js` | Observation Type (menu: Setup \ Observations \ Observation Type) | **ShowScreen**, **toolBarButtonClicked**, **ButtonClicked** |
 | HSE_TgObsrvtnTrgts | `Setup/Observations/Observation_Targets.js` | Observation Targets (menu: Setup \ Observations \ Observation Targets) | **ShowScreen**, **toolBarButtonClicked**, **ButtonClicked** |
 | HSE_TgNrstMiscInq | `Inquiry/Observation_Inquiry.js` | Observation Inquiry (menu: Inquiry screens \ Observation Inquiry) | **ShowScreen**, **toolBarButtonClicked**, **ButtonClicked** |
+| HSE_TgCompPrf | `Setup/General/Company_Profile.js` | Company Profile (menu: Setup \ General \ Company Profile) | **ShowScreen** |
+| HSE_DrllPlnEntryAtEntry | `Performance/Emergency Drills/Drill_Plan_Entry.js` | Drill Plan Entry (menu: Performance \ Emergency Drills \ Drill Plan Entry) | **ShowScreen**, **toolBarButtonClicked**, **ButtonClicked** |
 
 *Other events (MainSubReposition, onMenuItemClicked, SubFieldChanged, OnBeforeBrowseButtonClick, UpdateAfterBrowse) for these screens are still handled by shared code when the handler does not export them.*
+
+### All Setup menu screens (minimal handlers)
+
+All **110** screens under the Setup menu (and its submenus) in `HSE.json` now have a dedicated screen handler. For the **107** added in bulk, each handler exports only **ShowScreen** (enabling the toolbar via `setScreenDisableBtn(false, false, false)`). Paths follow the menu: `Setup/General/`, `Setup/General/HR/`, `Setup/Incidents/`, `Setup/Observations/`, `Setup/Risks/`, `Setup/Performance Measure/`, `Setup/Audits/`, `Setup/Permit to Work/`, `Setup/Aspect/`, `Setup/Chemical/`, `Setup/Emergency Drills/`, `Setup/Waste/`, `Setup/Environment Measures/`, `Setup/EQ Inspection/`, `Setup/Awareness/`, `Setup/Rescue Plans/`, `Setup/Safety Tools/`, `Setup/Contracts/Contracts/`, `Setup/CAR/`, `Setup/CAR/CAR Threats/`. The three Setup screens that already had richer handlers (Company Profile, Observation Type, Observation Targets) are unchanged.
+
+### All Environment menu screens (minimal handlers)
+
+All **7** screens under the Environment menu (and its submenus) in `HSE.json` have a dedicated screen handler. Each exports only **ShowScreen** (enabling the toolbar). Paths follow the menu: `Environment/Waste Management/` (Waste Receiving Entry, Waste Disposal Entry), `Environment/Chemical Register/`, `Environment/Environment Measures/` (Environmental Monitoring Plan, Environmental Measures), `Environment/Aspects Register/` (Aspects Entry, Aspects Review). None were pre-implemented; all 7 were added.
+
+### All Safety menu screens (minimal handlers except Observation)
+
+All **22** screens under the Safety menu have a dedicated screen handler. **4** were already implemented with full logic (Observation Entry, Observation Review, Observation Approval, Observation Reward under `Safety/Observation/`). **18** new minimal ShowScreen-only handlers were added: `Safety/Incident/` (9), `Safety/Risk Assessment/` (2), `Safety/Awareness/` (3), `Safety/Rescue Plan/` (1), `Safety/Safety_Tools.js` (1), `Safety/Summary Permits/` (2). Existing Observation handlers were not re-implemented.
+
+### All Performance menu screens (minimal handlers except Drill Plan Entry)
+
+All **26** screens under the Performance menu have a dedicated screen handler. **1** was already implemented (Drill Plan Entry – `HSE_DrllPlnEntryAtEntry` under `Performance/Emergency Drills/`). **25** new minimal ShowScreen-only handlers were added: `Performance/Site Survey/` (3), `Performance/EQ Inspection/` (3), `Performance/Emergency Drills/` (2: Drill Plan Approval, Drill Execution), `Performance/Auditing/` (5), `Performance/Performance Measure/` (3), `Performance/Action Tracking/` (9). Drill Plan Entry was not re-implemented.
+
+### Remaining menus (Inquiry screens, Logs, Reports)
+
+All screens under the remaining HSE top-level menus have a dedicated handler. **Inquiry screens:** 14 screens with TagName; **1** already implemented (Observation Inquiry – `HSE_TgNrstMiscInq`). **13** new minimal handlers under `Inquiry screens/`. **Logs:** 2 screens under `Logs/` (Logs Definition, Logs Entry). **Reports:** 1 screen under `Reports/` (Report Groups – `ReportTypes`). System Admin, Window, and Help have no screen TagNames in the menu. Observation Inquiry was not re-implemented.
 
 ---
 
@@ -77,7 +99,7 @@ Handler paths follow the HSE menu structure (see `Webinfra.Server/AppMenus/HSE.j
 
 ## Summary
 
-- **With handler:** 7 screens (Observation Entry, Observation Type, Observation Targets, Observation Review, Observation Approval, Observation Reward, Observation Inquiry); event handlers implemented in handler: ShowScreen, toolBarButtonClicked, ButtonClicked.
+- **With handler:** 182 screens total: 9 with full/custom logic plus **107 Setup**, **7 Environment**, **18 Safety**, **25 Performance**, and **16 remaining menus** (13 Inquiry screens, 2 Logs, 1 Reports – minimal). Observation Inquiry and other pre-existing handlers were not re-implemented.
 - **Reject Reason:** 1 screen; all event handlers via shared code.
 - **Shared SAVE/TXN:** 9 screens (including Observation Entry); all use the same 8 screen-level event handlers via shared code.
 
