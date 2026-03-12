@@ -11,6 +11,7 @@ import {
   handleRewardEntryCompleteButton,
   handleRejectReasonOkButton,
   setPendingRejectObservation,
+  setPendingRejectForModule,
   clearPendingRejectObservation,
 } from './ObservationButtonHandlers';
 
@@ -21,12 +22,13 @@ import {
   manageCommentsTabToolBar,
 } from './ObservationTabManagement';
 
-// Re-export for backward compatibility
+// Re-export for backward compatibility and for ModuleButtonHandlers (reject reason flow)
 export {
   isObservationTabsEnabled,
   manageObservationTabs,
   manageCommentsTabToolBar,
   setPendingRejectObservation,
+  setPendingRejectForModule,
   clearPendingRejectObservation,
 };
 

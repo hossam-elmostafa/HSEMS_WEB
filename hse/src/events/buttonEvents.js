@@ -1,6 +1,7 @@
 import { sendButtonClickToBackend, isObservationTabsEnabled, manageObservationTabs, manageCommentsTabToolBar } from '../services/Observation service/ObservationService';
 import { OBSERVATION_SCREEN_TAGS } from '../config/constants';
 import { getScreenHandler } from '../screenHandlers/index';
+import { handleModuleButton } from '../services/ModuleButtonHandlers/index.js';
 
 // Module-level variable to store devInterface functions
 let devInterfaceObj = {};
@@ -202,7 +203,7 @@ export async function toolBarButtonClicked(eventObj, callBackFn) {
  * 
  * This event doesn't require callback
  */
-export function ButtonClicked(eventObj) {
+export async function ButtonClicked(eventObj) {
   try {
     // Extract event data
     let {
@@ -217,33 +218,29 @@ export function ButtonClicked(eventObj) {
       fullRecordArrKeys,
     } = eventObj || {};
 
-    const screenHandler = getScreenHandler(strScrTag);
-    if (screenHandler && typeof screenHandler.ButtonClicked === 'function') {
-      eventObj.devInterfaceObj = devInterfaceObj;
-      screenHandler.ButtonClicked(eventObj);
-      return;
-    }
-    
-    // Normalize screen tag
-    if (strScrTag) {
-      strScrTag = strScrTag.toString().toUpperCase();
-    }
-    
-    // Extract and normalize button name
-    let normalizedButtonName = '';
-    if (Button_Name) {
-      normalizedButtonName = Button_Name.toString().toUpperCase();
-      
-      // Handle Observation module buttons with devInterface access
-      // This is a generalized handler - business logic is in ObservationService.js
-      sendButtonClickToBackend(normalizedButtonName, strScrTag, eventObj, devInterfaceObj);
+    eventObj.devInterfaceObj = devInterfaceObj;
+
+    const normalizedStrScrTag = strScrTag ? strScrTag.toString().toUpperCase() : '';
+    const normalizedButtonName = Button_Name ? Button_Name.toString().toUpperCase() : '';
+
+    // 1) Try module button handlers (Risk Assessment, Site Survey, PTW, Incident, Audit, Performance Measurement, Rescue Plan)
+    if (normalizedButtonName && normalizedStrScrTag) {
+      const moduleHandled = await handleModuleButton(normalizedButtonName, normalizedStrScrTag, eventObj, devInterfaceObj);
+      if (moduleHandled) return;
     }
 
-    // Any additional button-specific logic can go here
-    // (Currently just logging for observation screens, but this is where you'd add business logic)
-    
+    // 2) Try screen-specific handler (CAR, Observation, Drill Plan, etc.)
+    const screenHandler = getScreenHandler(strScrTag);
+    if (screenHandler && typeof screenHandler.ButtonClicked === 'function') {
+      await screenHandler.ButtonClicked(eventObj);
+      return;
+    }
+
+    // 3) Fallback: Observation module and logging
+    if (normalizedButtonName) {
+      sendButtonClickToBackend(normalizedButtonName, normalizedStrScrTag || strScrTag, eventObj, devInterfaceObj);
+    }
   } catch (error) {
-    // Silently handle any errors - logging already happened above
     console.warn('[Web_HSE] Error in ButtonClicked:', error.message);
   }
 }

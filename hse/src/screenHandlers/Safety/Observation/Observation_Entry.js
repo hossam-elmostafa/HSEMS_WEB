@@ -2,6 +2,7 @@
  * Screen handler: Observation Entry (HSE_TgNrstMiscEnt / HSE_TGNRSTMISCENT)
  * Menu path: Safety -> Observation -> Observation Entry (from HSE.json)
  * Delegates custom buttons to ObservationService and runs observation tab logic for toolbar events.
+ * C++: When NEW is clicked on Attachments tab, set next Line No. (getNxtSrl) via HSEMSCommonCategory.
  */
 
 import {
@@ -11,6 +12,47 @@ import {
   manageCommentsTabToolBar,
 } from '../../../services/Observation service/ObservationService.js';
 import { mapUnknownFieldTypes } from '../../../utils/fieldTypeMapper.js';
+import { setNextSerialOnNewTab } from '../../../utils/tabNewSerialUtils.js';
+
+const TABLE_MAIN_VIEW = 'HSE_vwNRSTMISCENT';
+const MAIN_KEY_FIELD = 'NrstMiscEnt_NrstMiscNum';
+
+/** Tab tags and config for NEW serial (C++ HSEMSCommonCategory getNxtSrl). */
+const TAB_NEW_SERIAL_CONFIG = {
+  HSE_TGNRSTMISCENTATCH: {
+    tabTable: 'HSE_NrstMiscEntAtch',
+    serialField: 'NRSTMISCENTATCH_SRLNO',
+    opts: {
+      tableName: 'HSE_NrstMiscEntAtch',
+      serialFieldName: 'NRSTMISCENTATCH_SRLNO',
+      linkFieldName: 'NRSTMISCENTATCH_LNK',
+      parentTableName: TABLE_MAIN_VIEW,
+      parentKeyFieldName: MAIN_KEY_FIELD,
+    },
+  },
+  HSE_TGNRSTMISCENTPSSBLNRSTMISCCUSE: {
+    tabTable: 'HSE_NRSTMISCENTPSSBLNRSTMISCCUSE',
+    serialField: 'NRSTMISCENTPSSBLNRSTMISCCUSE_LNRNUM',
+    opts: {
+      tableName: 'HSE_NRSTMISCENTPSSBLNRSTMISCCUSE',
+      serialFieldName: 'NRSTMISCENTPSSBLNRSTMISCCUSE_LNRNUM',
+      linkFieldName: 'NRSTMISCENTPSSBLNRSTMISCCUSE_LNK',
+      parentTableName: TABLE_MAIN_VIEW,
+      parentKeyFieldName: MAIN_KEY_FIELD,
+    },
+  },
+  HSE_TGNRSTMISCENTRQRDACC: {
+    tabTable: 'HSE_NRSTMISCENTRQDACTN',
+    serialField: 'NRSTMISCENTRQDACTN_ACTNNO',
+    opts: {
+      tableName: 'HSE_NRSTMISCENTRQDACTN',
+      serialFieldName: 'NRSTMISCENTRQDACTN_ACTNNO',
+      linkFieldName: 'NRSTMISCENTRQDACTN_LNK',
+      parentTableName: TABLE_MAIN_VIEW,
+      parentKeyFieldName: MAIN_KEY_FIELD,
+    },
+  },
+};
 
 /**
  * Handle custom button clicks on Observation Entry (Reject, Confirm, Cancel, Close, Entry Complete, etc.).
@@ -26,13 +68,25 @@ export function ButtonClicked(eventObj) {
 
 /**
  * Handle toolbar button clicks on Observation Entry (tab enabling after save, Comments tab management).
- * Mirrors observation logic from buttonEvents.js; then invokes callBackFn so infrastructure can continue.
+ * When NEW is clicked on Attachments tab, sets next Line No. (C++: getNxtSrl + FormSetField for HSE_TGNRSTMISCENTATCH).
  */
 export async function toolBarButtonClicked(eventObj, callBackFn) {
   const devInterface = eventObj.devInterfaceObj || {};
   let strScrTag = (eventObj.strScrTag && eventObj.strScrTag.toString().toUpperCase()) || '';
   const strTabTag = (eventObj.strTabTag && eventObj.strTabTag.toString().toUpperCase()) || '';
+  const strBtnName = (eventObj.strBtnName && eventObj.strBtnName.toString().toUpperCase()) || '';
   const complete = eventObj.complete;
+
+  try {
+    if (strBtnName === 'NEW' && complete === 1 && strTabTag) {
+      const config = TAB_NEW_SERIAL_CONFIG[strTabTag];
+      if (config) {
+        await setNextSerialOnNewTab(devInterface, config.tabTable, config.serialField, config.opts);
+      }
+    }
+  } catch (error) {
+    console.warn('[Web_HSE] Observation Entry toolBarButtonClicked tab NEW serial:', error);
+  }
 
   try {
     if (complete === 1) {

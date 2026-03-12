@@ -1,12 +1,82 @@
 /**
  * Screen handler: Drill Plan Entry (HSE_DrllPlnEntryAtEntry)
  * Menu path: Performance -> Emergency Drills -> Drill Plan Entry (from HSE.json)
- * C++: DrillPlanEntryCategory – ShowDrillPlanEntry, DisplayToolBarButtonClicked, DisplayCustomButtonClicked.
+ * C++: DrillPlanEntryCategory – ShowDrillPlanEntry, DisplayToolBarButtonClicked (NEW: main form DRLLPLN_DRLLN + tab serials).
  */
 
+import { setNextSerialOnNewTab, getNextSerialForTab } from '../../../utils/tabNewSerialUtils.js';
 
 const DRILL_PLAN_ENTRY_TAG = 'HSE_DRLLPLNENTRYATENTRY';
 const TABLE_DRLLPLN_VW = 'HSE_DRLLPLN_VW';
+
+const TAB_NEW_SERIAL_CONFIG = {
+  HSE_DRLLPLN_UNPLNDSCNROS: {
+    tabTable: 'HSE_DRLLPLN_UNPLNDSCNROS',
+    serialField: 'DRLLPLN_UNPLNDSCNROS_SCNRCD',
+    opts: {
+      tableName: 'HSE_DRLLPLN_UNPLNDSCNROS',
+      serialFieldName: 'DRLLPLN_UNPLNDSCNROS_SCNRCD',
+      linkFieldName: 'MainLink',
+      parentTableName: TABLE_DRLLPLN_VW,
+      parentKeyFieldName: 'DRLLPLN_PRMRYKY',
+    },
+  },
+  HSE_DRLLPLN_EMT: {
+    tabTable: 'HSE_DRLLPLN_EMT',
+    serialField: 'DRLLPLN_EMT_SRLN',
+    opts: {
+      tableName: 'HSE_DRLLPLN_EMT',
+      serialFieldName: 'DRLLPLN_EMT_SRLN',
+      linkFieldName: 'MAINLINK',
+      parentTableName: TABLE_DRLLPLN_VW,
+      parentKeyFieldName: 'DRLLPLN_PRMRYKY',
+    },
+  },
+  HSE_DRLLPLN_ERT: {
+    tabTable: 'HSE_DRLLPLN_ERT',
+    serialField: 'DRLLPLN_ERT_SRLN',
+    opts: {
+      tableName: 'HSE_DRLLPLN_ERT',
+      serialFieldName: 'DRLLPLN_ERT_SRLN',
+      linkFieldName: 'MAINLINK',
+      parentTableName: TABLE_DRLLPLN_VW,
+      parentKeyFieldName: 'DRLLPLN_PRMRYKY',
+    },
+  },
+  HSE_DRLLPLN_INTRNLRSURCS: {
+    tabTable: 'HSE_DRLLPLN_INTRNLRSURCS',
+    serialField: 'DRLLPLN_INTRNLRSURCS_SRLN',
+    opts: {
+      tableName: 'HSE_DRLLPLN_INTRNLRSURCS',
+      serialFieldName: 'DRLLPLN_INTRNLRSURCS_SRLN',
+      linkFieldName: 'MAINLINK',
+      parentTableName: TABLE_DRLLPLN_VW,
+      parentKeyFieldName: 'DRLLPLN_PRMRYKY',
+    },
+  },
+  HSE_DRLLPLN_EXTRNLSUPPRT: {
+    tabTable: 'HSE_DRLLPLN_EXTRNLSUPPRT',
+    serialField: 'DRLLPLN_EXTRNLSUPPRT_SRLN',
+    opts: {
+      tableName: 'HSE_DRLLPLN_EXTRNLSUPPRT',
+      serialFieldName: 'DRLLPLN_EXTRNLSUPPRT_SRLN',
+      linkFieldName: 'MAINLINK',
+      parentTableName: TABLE_DRLLPLN_VW,
+      parentKeyFieldName: 'DRLLPLN_PRMRYKY',
+    },
+  },
+  HSE_DRLLPLN_EXCUTNCMMNTS: {
+    tabTable: 'HSE_DRLLPLN_EXCUTNCMMNTS',
+    serialField: 'DRLLPLN_EXCUTNCMMNTS_SRLN',
+    opts: {
+      tableName: 'HSE_DRLLPLN_EXCUTNCMMNTS',
+      serialFieldName: 'DRLLPLN_EXCUTNCMMNTS_SRLN',
+      linkFieldName: 'MAINLINK',
+      parentTableName: TABLE_DRLLPLN_VW,
+      parentKeyFieldName: 'DRLLPLN_PRMRYKY',
+    },
+  },
+};
 
 /**
  * Get allow-drill-entry policy from HSE_HSEPLC_EMRDRL (C++ allowDrillEntry).
@@ -128,13 +198,27 @@ export async function toolBarButtonClicked(eventObj, callBackFn) {
     }
 
     if (complete === 1) {
-      const { FormSetField } = devInterface;
+      const { FormSetField, FormGetField } = devInterface;
       if (FormSetField) {
         if (strBtnName === 'NEW') {
-          const drillYr = await getPolicyDrillYr(devInterface);
-          if (drillYr) FormSetField(TABLE_DRLLPLN_VW, 'DRLLPLN_DRLLYR', drillYr);
-          const defaultSite = await getDefaultSite(devInterface);
-          if (defaultSite) FormSetField(DRILL_PLAN_ENTRY_TAG, 'DRLLPLN_ST', defaultSite);
+          if (strTabTag === '') {
+            const drillYr = await getPolicyDrillYr(devInterface);
+            if (drillYr) FormSetField(TABLE_DRLLPLN_VW, 'DRLLPLN_DRLLYR', drillYr);
+            const defaultSite = await getDefaultSite(devInterface);
+            if (defaultSite) FormSetField(DRILL_PLAN_ENTRY_TAG, 'DRLLPLN_ST', defaultSite);
+            const yrVal = FormGetField ? FormGetField(TABLE_DRLLPLN_VW, 'DRLLPLN_DRLLYR', 'scr') : '';
+            const nextDrllN = await getNextSerialForTab(devInterface, {
+              tableName: TABLE_DRLLPLN_VW,
+              serialFieldName: 'DRLLPLN_DRLLN',
+              linkFieldName: 'DRLLPLN_DRLLYR',
+              parentTableName: TABLE_DRLLPLN_VW,
+              parentKeyFieldName: 'DRLLPLN_DRLLYR',
+            }, yrVal);
+            FormSetField(TABLE_DRLLPLN_VW, 'DRLLPLN_DRLLN', String(nextDrllN), 'scr');
+          } else {
+            const config = TAB_NEW_SERIAL_CONFIG[strTabTag];
+            if (config) await setNextSerialOnNewTab(devInterface, config.tabTable, config.serialField, config.opts);
+          }
         } else if (strBtnName === 'SAVE' && strTabTag === '') {
           const now = new Date();
           const mdy = `${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}/${now.getFullYear()}`;

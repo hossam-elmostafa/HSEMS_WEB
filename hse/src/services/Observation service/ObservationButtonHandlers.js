@@ -16,15 +16,39 @@ import { toast } from "react-toastify";
  * - RQ_HSM_22_12_25_11_43: Handle Reward Entry Completed Custom Button
  */
 
-// Store pending reject observation execution info (module-level)
+// Store pending reject execution info (module-level). Supports Observation, PTW, Incident, Risk Assessment, Vehicle Accident.
+// moduleType: 'OBSERVATION' | 'PTW' | 'INCIDENT' | 'RISK' | 'VEHICLE_ACCIDENT'
 let pendingRejectObservation = null;
 
 export function setPendingRejectObservation(observationInfo) {
-  pendingRejectObservation = observationInfo;
+  pendingRejectObservation = observationInfo ? { ...observationInfo, moduleType: observationInfo.moduleType || 'OBSERVATION' } : null;
 }
 
 export function clearPendingRejectObservation() {
   pendingRejectObservation = null;
+}
+
+/**
+ * Set pending reject for non-Observation modules (PTW, Incident, Risk Assessment, Vehicle Accident).
+ * When user clicks OK on reject reason screen, the appropriate SP or update will run.
+ * @param {string} moduleType - 'PTW' | 'INCIDENT' | 'RISK' | 'VEHICLE_ACCIDENT' | 'POTENTIAL_HAZARD' | 'LOSS_ACCIDENT'
+ * @param {string} keyFieldValue - record key
+ * @param {string} sourceScreenName - form/screen tag for SourceScreenName
+ * @param {Object} devInterface - getUserName, executeSQLPromise/executeSQL, refreshData, toast
+ */
+export function setPendingRejectForModule(moduleType, keyFieldValue, sourceScreenName, devInterface) {
+  const executeSQLAsync = devInterface?.executeSQLPromise || devInterface?.executeSQL;
+  if (!executeSQLAsync || !keyFieldValue) return;
+  pendingRejectObservation = {
+    moduleType,
+    keyFieldValue: String(keyFieldValue),
+    formTag: sourceScreenName,
+    sourceScreenName: sourceScreenName || '',
+    getUserName: devInterface.getUserName,
+    executeSQLAsync,
+    refreshData: devInterface.refreshData,
+    toast: devInterface.toast,
+  };
 }
 
 /**
@@ -1111,8 +1135,8 @@ export async function handleCloseButton(buttonName, screenTag, eventObj, devInte
  * Handle Reject Reason screen OK button click
  * C++: CRejectReason::RejectReasonOk() - sets gbUpdateRejectedRecord = true
  * This is called when RJCTRSN_BTN_OK is clicked in the reject reason screen
+ * Supports: Observation (rejectObservation), PTW (rejectPTW), Incident (rejectIncident), Risk (rejectRiskAssessment), Vehicle Accident (updateTXNSts status 3)
  * RQ_HSM_22_12_10_50: Handle Reject Custom Button
- * ClickUp Task: https://app.clickup.com/t/86c76v8yr
  * @param {Object} devInterface - Object containing devInterface functions
  */
 export async function handleRejectReasonOkButton(devInterface) {
@@ -1122,30 +1146,61 @@ export async function handleRejectReasonOkButton(devInterface) {
       return;
     }
 
-    console.log('[Web_HSE] Executing rejectObservation stored procedure...');
-    
-    const { keyFieldValue, formTag, getUserName, executeSQLAsync, refreshData, toast } = pendingRejectObservation;
-    const userName = getUserName() || '';
-    const sourceScreenName = formTag;
-    
-    // C++: strSQL.Format("EXECUTE rejectObservation '%s','%s','%s'",KeyFieldValue,strSourceScreenName,strUserName);
-    // Note: keyFieldValue should be passed as string (stored procedure expects VARCHAR)
-    const spSql = `EXECUTE rejectObservation '${keyFieldValue.toString().replace(/'/g, "''")}','${sourceScreenName.replace(/'/g, "''")}','${userName.replace(/'/g, "''")}'`;
-    
-    console.log('[Web_HSE] Executing SQL:', spSql);
+    const { moduleType, keyFieldValue, formTag, getUserName, executeSQLAsync, refreshData, toast } = pendingRejectObservation;
+    const getU = typeof getUserName === 'function' ? getUserName : (devInterface?.getUserName || (() => ''));
+    const userName = (getU() || '').toString().replace(/'/g, "''");
+    const sourceScreenName = (formTag || pendingRejectObservation.sourceScreenName || '').toString().replace(/'/g, "''");
+    const key = keyFieldValue.toString().replace(/'/g, "''");
+    const refresh = typeof refreshData === 'function' ? refreshData : devInterface?.refreshData;
+    const toastFn = toast || devInterface?.toast;
+
+    let spSql;
+    let successMsg;
+    const runRefresh = () => { if (refresh) refresh('', 'REFRESH_SELECTED'); };
+
+    switch (moduleType) {
+      case 'PTW':
+        spSql = `EXECUTE rejectPTW '${key}','${sourceScreenName}','${userName}'`;
+        successMsg = `PTW ${keyFieldValue} rejected successfully`;
+        break;
+      case 'INCIDENT':
+        spSql = `EXECUTE rejectIncident '${key}','${sourceScreenName}','${userName}'`;
+        successMsg = `Incident ${keyFieldValue} rejected successfully`;
+        break;
+      case 'RISK':
+        spSql = `EXECUTE rejectRiskAssessment '${key}','${sourceScreenName}','${userName}'`;
+        successMsg = `Risk assessment ${keyFieldValue} rejected successfully`;
+        break;
+      case 'VEHICLE_ACCIDENT':
+        spSql = `EXECUTE updateTXNSts '${key}','3','VCLACDNTENT','VCLACDNTENT_VCLACDNTNO'`;
+        successMsg = `Vehicle accident ${keyFieldValue} rejected successfully`;
+        break;
+      case 'POTENTIAL_HAZARD':
+        spSql = `EXECUTE updateTXNSts '${key}','3','PTNLHZRDENT','PTNLHZRDENT_PTNLHZRDNO'`;
+        successMsg = `Potential hazard ${keyFieldValue} rejected successfully`;
+        break;
+      case 'LOSS_ACCIDENT':
+        spSql = `EXECUTE updateTXNSts '${key}','3','LOSSACDNTENT','LOSSACDNTENT_ACTHZRDNO'`;
+        successMsg = `Loss accident ${keyFieldValue} rejected successfully`;
+        break;
+      case 'OBSERVATION':
+      default:
+        spSql = `EXECUTE rejectObservation '${key}','${sourceScreenName}','${userName}'`;
+        successMsg = `Observation ${keyFieldValue} rejected successfully`;
+        break;
+    }
+
+    console.log('[Web_HSE] Executing reject OK for moduleType:', moduleType, 'SQL:', spSql);
     await executeSQLAsync(spSql);
-    console.log('[Web_HSE] ✓ rejectObservation executed successfully');
-    
-    // C++: RefreshScreen("",REFRESH_SELECTED);
-    refreshData('', 'REFRESH_SELECTED');
-    toast.success(`Observation ${keyFieldValue} rejected successfully`);
-    
-    // Clear pending execution
+    console.log('[Web_HSE] ✓ Reject executed successfully');
+    runRefresh();
+    if (toastFn && toastFn.success) toastFn.success(successMsg);
     clearPendingRejectObservation();
   } catch (error) {
-    console.error('[Web_HSE] ✗ Error executing rejectObservation:', error);
-    if (pendingRejectObservation && pendingRejectObservation.toast) {
-      pendingRejectObservation.toast.error('Error rejecting observation: ' + (error.message || 'Unknown error'));
+    console.error('[Web_HSE] ✗ Error executing reject:', error);
+    if (pendingRejectObservation && (pendingRejectObservation.toast || devInterface?.toast)) {
+      const t = pendingRejectObservation.toast || devInterface.toast;
+      if (t && t.error) t.error('Error rejecting: ' + (error.message || 'Unknown error'));
     }
     clearPendingRejectObservation();
   }
