@@ -141,6 +141,7 @@ export function sendButtonClickToBackend(buttonName, screenTag, eventObj = {}, d
     // ClickUp Task: https://app.clickup.com/t/86c76v9yr
     handleCancelButton(buttonName, screenTag, eventObj, devInterface);
   } else if (normalizedButton === 'NRSTMISCENT_CLS' || normalizedButton.endsWith('_CLS')) {
+    // BUG_HSE_HSM_14_3_26: Observation Approval Close – desktop parity (save, key/employee checks, closeNearMissTXN, refresh)
     // (RQ_HSM_22_12_11_28) Handle Close Custom Button
     handleCloseButton(buttonName, screenTag, eventObj, devInterface);
   } else {

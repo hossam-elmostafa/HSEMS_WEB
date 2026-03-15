@@ -28,6 +28,29 @@ const TAB_NEW_SERIAL_CONFIG = {
       parentKeyFieldName: MAIN_KEY_FIELD,
     },
   },
+  // Attachments tab – same table/serial as Observation Entry (C++ getNxtSrl for HSE_TGNRSTMISCCNFRMTNATCH).
+  HSE_TGNRSTMISCCNFRMTNATCH: {
+    tabTable: 'HSE_NrstMiscEntAtch',
+    serialField: 'NRSTMISCENTATCH_SRLNO',
+    opts: {
+      tableName: 'HSE_NrstMiscEntAtch',
+      serialFieldName: 'NRSTMISCENTATCH_SRLNO',
+      linkFieldName: 'NRSTMISCENTATCH_LNK',
+      parentTableName: TABLE_MAIN_VIEW,
+      parentKeyFieldName: MAIN_KEY_FIELD,
+    },
+  },
+  HSE_NRSTMISCENTATCH: {
+    tabTable: 'HSE_NrstMiscEntAtch',
+    serialField: 'NRSTMISCENTATCH_SRLNO',
+    opts: {
+      tableName: 'HSE_NrstMiscEntAtch',
+      serialFieldName: 'NRSTMISCENTATCH_SRLNO',
+      linkFieldName: 'NRSTMISCENTATCH_LNK',
+      parentTableName: TABLE_MAIN_VIEW,
+      parentKeyFieldName: MAIN_KEY_FIELD,
+    },
+  },
 };
 
 export function ButtonClicked(eventObj) {
@@ -48,12 +71,16 @@ export async function toolBarButtonClicked(eventObj, callBackFn) {
   try {
     if (strBtnName === 'NEW' && complete === 1 && strTabTag) {
       const config = TAB_NEW_SERIAL_CONFIG[strTabTag];
-      if (config) await setNextSerialOnNewTab(devInterface, config.tabTable, config.serialField, config.opts);
+      if (config) {
+        //BUG_HSE_HSM_14_3_17_35: Observation Review tab NEW serial is not working
+        await setNextSerialOnNewTab(devInterface, config.tabTable, config.serialField, config.opts);
+      }
     }
   } catch (error) {
     console.warn('[Web_HSE] Observation Review toolBarButtonClicked tab NEW serial:', error);
   }
 
+  // Run observation tabs management and comments BEFORE calling back
   try {
     if (complete === 1) {
       const { executeSQLPromise, TabEnable } = devInterface;
@@ -70,6 +97,33 @@ export async function toolBarButtonClicked(eventObj, callBackFn) {
   }
 
   callBackFn(eventObj);
+
+  // Re-apply serial after callback (the callback may trigger state resets that overwrite the field).
+  // This mirrors the desktop C++ behaviour where getNxtSrl + FormSetField occurs after the framework has finished setting up the new row.
+  try {
+    if (strBtnName === 'NEW' && complete === 1 && strTabTag) {
+      const config = TAB_NEW_SERIAL_CONFIG[strTabTag];
+      if (config && devInterface.FormSetField && devInterface.executeSQLPromise) {
+        const { FormGetField, executeSQLPromise, getValFromRecordSet } = devInterface;
+        const parentKey = FormGetField
+          ? FormGetField(config.opts.parentTableName, config.opts.parentKeyFieldName, 'scr')
+          : '';
+        const key = parentKey != null && parentKey !== '' ? String(parentKey).trim() : '';
+        const esc = key.replace(/'/g, "''");
+        const where = config.opts.linkFieldName ? `WHERE ${config.opts.linkFieldName} = '${esc}'` : '';
+        const sql = `SELECT ISNULL(MAX(${config.opts.serialFieldName})+1,1) AS New_Serial FROM ${config.opts.tableName} ${where}`.trim();
+        const data = await executeSQLPromise(sql);
+        let val = data?.recordset?.[0] && getValFromRecordSet
+          ? getValFromRecordSet(data, 'New_Serial')
+          : data?.recordset?.[0]?.New_Serial;
+        const n = parseInt(val, 10);
+        const newSerial = Number.isFinite(n) && n > 0 ? n : 1;
+        devInterface.FormSetField(config.tabTable, config.serialField, String(newSerial), 'tab');
+      }
+    }
+  } catch (e) {
+    // Fallback serial attempt failed; the first attempt may have succeeded
+  }
 }
 
 export async function ShowScreen(setScreenDisableBtn, strScrTag, strTabTag, devInterfaceObj) {

@@ -14,6 +14,8 @@ import { beforeRenderAppMenu, beforeRenderCustomActions, onMenuItemClicked, onAp
 // Import utilities
 import { getMessage } from './src/utils/messageUtils';
 import { getAppPolicy, getAppPolicyV2 } from './src/utils/policyUtils';
+// BUG_HSE_HSM_14_3_26: desktop GetEmployeeCodeForLoginUser – employee code for current login
+import { getEmployeeCodeForLoginUser as getEmployeeCodeForLoginUserImpl } from './src/utils/getEmployeeCodeForLoginUser';
 
 export default function useHSE(useDevInterfaceFun) {
   const {
@@ -99,6 +101,8 @@ export default function useHSE(useDevInterfaceFun) {
   devInterfaceObj.TabEnable = TabEnable;
   devInterfaceObj.openAdvancedFilter = openAdvancedFilter;
   devInterfaceObj.changeCustomButtonProperty = changeCustomButtonProperty;
+  // BUG_HSE_HSM_14_3_26: expose getEmployeeCodeForLoginUser for Observation Approval Close and other flows
+  devInterfaceObj.getEmployeeCodeForLoginUser = () => getEmployeeCodeForLoginUserImpl(devInterfaceObj);
 
   // Set devInterface for ButtonClicked handler
   setDevInterface(devInterfaceObj);

@@ -1,4 +1,6 @@
 import { toast } from "react-toastify";
+// BUG_HSE_HSM_14_3_26_17_33: use getScreenCaption so reject tracing tab Source Screen is caption (desktop behaviour)
+import { getScreenCaption } from "../ModuleButtonHandlers/moduleButtonHandlersUtils.js";
 
 /**
  * ObservationButtonHandlers.js
@@ -245,9 +247,12 @@ export async function handleRejectButton(buttonName, screenTag, eventObj, devInt
     // C++: After reject reason screen closes, checks getgbUpdateRejectedRecord() flag
     // In JS: We use ButtonClicked event to detect when RJCTRSN_BTN_OK is clicked
     // C++: setgbUpdateRejectedRecord(false) is set initially, then true when OK is clicked
+    // BUG_HSE_HSM_14_3_26_17_33: pass screen caption as sourceScreenName so tracing tab Source Screen matches desktop (GetScrCptnByTag)
+    const sourceScreenName = getScreenCaption(formTag) || formTag;
     setPendingRejectObservation({
       keyFieldValue: keyFieldValue.toString(), // Ensure it's a string for the stored procedure
       formTag,
+      sourceScreenName,
       getUserName,
       executeSQLAsync,
       refreshData,
@@ -369,7 +374,8 @@ export async function handleConfirmButton(buttonName, screenTag, eventObj, devIn
     }
 
     // Build stored procedure call
-    const sourceScreenName = formTag;
+    // BUG_HSE_HSM_14_3_26_17_33: tracing tab Source Screen must be caption not form tag (desktop uses GetScrCptnByTag).
+    const sourceScreenName = getScreenCaption(formTag) || formTag;
     const userName = getUserName() || '';
     const spSql = `EXECUTE confirmNearMissTXN '${keyFieldValue.replace(/'/g, "''")}','${sourceScreenName.replace(
       /'/g,
@@ -908,9 +914,8 @@ export async function handleEntryCompleteButton(buttonName, screenTag, eventObj,
     
     // Get source screen name
     // C++: CString strSourceScreenName = GetScrCptnByTag(66, pCustomButtonClicked->Form_Tag, "");
-    // Note: GetScrCptnByTag gets the screen caption from the screen tag
-    // For now, we'll use the screen tag as the source screen name (this matches other implementations)
-    const sourceScreenName = screenTag || 'HSE_TgNrstMiscEnt';
+    // BUG_HSE_HSM_14_3_26_17_33: tracing tab Source Screen must be caption not form tag (desktop uses GetScrCptnByTag).
+    const sourceScreenName = getScreenCaption(screenTag) || screenTag || 'Observation Entry';
     
     // Get user name
     // C++: CString strUserName = GetUserLogin();
@@ -950,17 +955,18 @@ export async function handleEntryCompleteButton(buttonName, screenTag, eventObj,
 }
 
 /**
- * Handle Close button click
+ * Handle Close button click (Observation Approval / Follow-up).
+ * BUG_HSE_HSM_14_3_26: Desktop parity – validations and actions per Observation_Approval_Close_Button_Desktop_Behavior.md
  * (RQ_HSM_22_12_11_28) Handle Close Custom Button
- * Implements the logic from NearMissFollowUpCategory::DisplayCustomButtonClicked for NRSTMISCENT_CLS
- * C++ Reference: NearMissFollowUpCategory::DisplayCustomButtonClicked (lines 43-270)
+ * Implements NearMissFollowUpCategory::DisplayCustomButtonClicked for NRSTMISCENT_CLS
+ * C++ Reference: NearMissFollowUpCategory.cpp DisplayCustomButtonClicked (lines 43-270)
  * @param {string} buttonName - The button name
  * @param {string} screenTag - The screen tag
  * @param {Object} eventObj - The full event object
  * @param {Object} devInterface - Object containing devInterface functions
  */
 export async function handleCloseButton(buttonName, screenTag, eventObj, devInterface) {
-  // (RQ_HSM_22_12_11_28) Handle Close Custom Button
+  // BUG_HSE_HSM_14_3_26: Close button – desktop behaviour (save first, key/employee checks, closeNearMissTXN, refresh)
   try {
     const {
       FormGetField,
@@ -969,9 +975,9 @@ export async function handleCloseButton(buttonName, screenTag, eventObj, devInte
       getUserName,
       refreshData,
       doToolbarAction,
+      getEmployeeCodeForLoginUser,
     } = devInterface;
 
-    // Validate required functions
     if (
       !FormGetField ||
       (!executeSQL && !executeSQLPromise) ||
@@ -987,15 +993,12 @@ export async function handleCloseButton(buttonName, screenTag, eventObj, devInte
     const executeSQLAsync = executeSQLPromise || executeSQL;
     const formTag = screenTag || 'HSE_TGNRSTMISCFLWUP';
 
-    // C++: DoToolBarAction(TOOLBAR_SAVE, pCustomButtonClicked->Form_Tag, "");
-    // Save the record first before closing
+    // BUG_HSE_HSM_14_3_26: C++ DoToolBarAction(TOOLBAR_SAVE, Form_Tag, "") – save (validation + persist) before close logic
     doToolbarAction('SAVE', formTag, '');
 
-    // Extract event data
     const { fullRecord: fullRecordArr, fullRecordArrKeys } = eventObj || {};
 
-    // Get key field value (Observation number)
-    // C++: CString KeyFieldValue = GetKeyField(strFormTag, pCustomButtonClicked->pMultiSelectedRows);
+    // BUG_HSE_HSM_14_3_26: C++ KeyFieldValue = GetKeyField(strFormTag, pMultiSelectedRows)
     let keyFieldValue = '';
     if (fullRecordArrKeys && fullRecordArrKeys.length > 0) {
       keyFieldValue = fullRecordArrKeys[0].toString();
@@ -1007,36 +1010,39 @@ export async function handleCloseButton(buttonName, screenTag, eventObj, devInte
         '';
     }
 
-    // Fallback: read from form if still empty
     if (!keyFieldValue) {
       try {
         keyFieldValue = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM') || '';
       } catch (e) {
-        // Ignore error, try next option
+        // ignore
       }
       if (!keyFieldValue) {
         try {
           keyFieldValue = FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM') || '';
         } catch (e) {
-          // Ignore error
+          // ignore
         }
       }
     }
 
+    // BUG_HSE_HSM_14_3_26: C++ if KeyFieldValue empty: only RefreshScreen (no closeNearMissTXN)
     if (!keyFieldValue) {
       toast.warning('Unable to find Observation number. Please select a record first.');
+      refreshData('', 'REFRESH_SELECTED');
       return;
     }
 
-    // C++: CString strEmployeeName = GetEmployeeCodeForLoginUser();
-    // C++: if(strEmployeeName != "")
-    // Note: In C++, it checks for employee name, but we'll proceed with the close operation
-    // The stored procedure may handle employee validation internally
+    // BUG_HSE_HSM_14_3_26: C++ strEmployeeName = GetEmployeeCodeForLoginUser(); if empty, only RefreshScreen
+    if (typeof getEmployeeCodeForLoginUser === 'function') {
+      const employeeCode = await getEmployeeCodeForLoginUser();
+      const emp = employeeCode != null && String(employeeCode).trim() !== '' ? String(employeeCode).trim() : '';
+      if (emp === '') {
+        refreshData('', 'REFRESH_SELECTED');
+        return;
+      }
+    }
 
-    // Get screen name based on form tag
-    // C++:
-    //   if (strForm_Tag=="HSE_TGNRSTMISCCNFRMTN") strScreenName="Observation Review";
-    //   else if (strForm_Tag=="HSE_TGNRSTMISCFLWUP") strScreenName="Observation Approval";
+    // BUG_HSE_HSM_14_3_26: C++ strSourceScreenName = GetScrCptnByTag(66, strFormTag, "") – use caption for tracing
     let screenName = '';
     const normalizedFormTag = formTag.toUpperCase();
     if (normalizedFormTag === 'HSE_TGNRSTMISCCNFRMTN' || normalizedFormTag.includes('CNFRMTN')) {
@@ -1046,81 +1052,21 @@ export async function handleCloseButton(buttonName, screenTag, eventObj, devInte
     } else if (normalizedFormTag === 'HSE_TGNRMISRWARD' || normalizedFormTag.includes('RWARD')) {
       screenName = 'Observation Reward';
     } else {
-      screenName = 'Observation Entry'; // Default fallback
+      screenName = 'Observation Entry';
     }
-
-    // C++: CString strSourceScreenName = GetScrCptnByTag(66, strFormTag, "");
-    // C++: CString strUserName = GetUserLogin();
-    // C++: strSQL.Format("EXECUTE closeNearMissTXN '%s','%s','%s'", KeyFieldValue, strUserName, strSourceScreenName);
-    const sourceScreenName = screenName; // Use screen name (caption) as source screen name
+    const sourceScreenName = getScreenCaption(formTag) || screenName;
     const userName = getUserName() || '';
-    const spSql = `EXECUTE closeNearMissTXN '${keyFieldValue.toString().replace(/'/g, "''")}','${userName.replace(/'/g, "''")}','${sourceScreenName.replace(/'/g, "''")}'`;
 
-    console.log('[Web_HSE] Executing closeNearMissTXN stored procedure:', {
-      observationNumber: keyFieldValue,
-      userName: userName,
-      sourceScreenName: sourceScreenName,
-    });
+    const spSql = `EXECUTE closeNearMissTXN '${keyFieldValue.toString().replace(/'/g, "''")}','${userName.replace(/'/g, "''")}','${sourceScreenName.replace(/'/g, "''")}'`;
 
     try {
       await executeSQLAsync(spSql);
-      
-      // C++: InsertActionRecordIntoTracingTab("NRSTMISCENT","NRSTMISCNUM",CLOSED);
-      // C++: CLOSED maps to "Closed" action description
-      // Similar to Cancel button, we need to insert a tracing record manually
-      // C++: strSQL.Format("insert into HSE_NRSTMISCENTTRC (NRSTMISCENTTRC_DATTIM,NRSTMISCENTTRC_ACCDESC,NRSTMISCENTTRC_LNK,NRSTMISCENTTRC_ENTUSR,SRCSCRN) values (getdate(),'Closed',%s,'%s','%s')",linkFieldVal,strUserName,strScreenName);
-      const linkFieldVal = keyFieldValue;
-      const linkFieldValNum = typeof linkFieldVal === 'string' ? linkFieldVal.replace(/['"]/g, '') : linkFieldVal;
-      const insertTracingSql = `INSERT INTO HSE_NRSTMISCENTTRC (NRSTMISCENTTRC_DATTIM,NRSTMISCENTTRC_ACCDESC,NRSTMISCENTTRC_LNK,NRSTMISCENTTRC_ENTUSR,SRCSCRN) VALUES (getdate(),'Closed',${linkFieldValNum},'${userName.replace(/'/g, "''")}','${screenName.replace(/'/g, "''")}')`;
 
-      console.log('[Web_HSE] Inserting Close tracing record with SQL:', insertTracingSql);
-      
-      try {
-        await executeSQLAsync(insertTracingSql);
-        console.log('[Web_HSE] ✓ Tracing record inserted for closed observation');
-        
-        // Verify the tracing record was inserted
-        const verifyClosedSql = `SELECT TOP 1 NRSTMISCENTTRC_ACCDESC, NRSTMISCENTTRC_DATTIM 
-                                FROM HSE_NRSTMISCENTTRC 
-                                WHERE NRSTMISCENTTRC_LNK = ${linkFieldValNum} 
-                                AND NRSTMISCENTTRC_ACCDESC = 'Closed' 
-                                ORDER BY NRSTMISCENTTRC_DATTIM DESC`;
-        const verifyResult = await executeSQLAsync(verifyClosedSql);
-        const closedExists = verifyResult?.recordsets?.[0]?.length > 0 || verifyResult?.length > 0;
-        console.log('[Web_HSE] Verification - "Closed" tracing record exists:', closedExists);
-        
-      } catch (tracingError) {
-        console.warn('[Web_HSE] Error inserting tracing record (continuing anyway):', tracingError);
-        // Continue even if tracing record insertion fails
-      }
-      
+      // BUG_HSE_HSM_14_3_26: Desktop does not insert tracing after SP – closeNearMissTXN does status + tracing (and CAR if required)
       // C++: RefreshScreen("", REFRESH_SELECTED);
-      // Refresh immediately
       refreshData('', 'REFRESH_SELECTED');
-      
-      // Additional refreshes with delays to ensure tracing tab loads in all screens
-      // This helps ensure the tracing record is visible in both Approval and Reward screens
-      setTimeout(() => {
-        refreshData('', 'REFRESH_SELECTED');
-        console.log('[Web_HSE] First delayed refresh for tracing tab');
-      }, 500);
-      
-      setTimeout(() => {
-        refreshData('', 'REFRESH_SELECTED');
-        console.log('[Web_HSE] Second delayed refresh for tracing tab');
-      }, 1500);
-      
-      setTimeout(() => {
-        refreshData('', 'REFRESH_SELECTED');
-        console.log('[Web_HSE] Third delayed refresh for tracing tab (ensures visibility in Reward screen)');
-      }, 2500);
-      
+
       toast.success('Observation closed successfully');
-      
-      // Note: CAR creation logic (if NRSTMISCENT_RQRCR == "Y") is handled by the stored procedure
-      // The C++ code has extensive CAR creation logic, but it's likely moved to the stored procedure
-      // as indicated by the comment "Commented_Code Moved to DB to check original code"
-      
     } catch (error) {
       console.error('[Web_HSE] Error executing closeNearMissTXN:', error);
       toast.error('Error closing observation. Please try again.');
@@ -1149,7 +1095,13 @@ export async function handleRejectReasonOkButton(devInterface) {
     const { moduleType, keyFieldValue, formTag, getUserName, executeSQLAsync, refreshData, toast } = pendingRejectObservation;
     const getU = typeof getUserName === 'function' ? getUserName : (devInterface?.getUserName || (() => ''));
     const userName = (getU() || '').toString().replace(/'/g, "''");
-    const sourceScreenName = (formTag || pendingRejectObservation.sourceScreenName || '').toString().replace(/'/g, "''");
+    // BUG_HSE_HSM_14_3_26_17_33: tracing tab Source Screen must be caption not form tag (desktop uses GetScrCptnByTag). Resolve caption here so it is always used.
+    let sourceScreenName = (pendingRejectObservation.sourceScreenName || formTag || '').toString();
+    const isObservation = !moduleType || moduleType === 'OBSERVATION';
+    if (isObservation && formTag && (sourceScreenName.startsWith('HSE_TG') || sourceScreenName === formTag)) {
+      sourceScreenName = getScreenCaption(formTag) || sourceScreenName;
+    }
+    sourceScreenName = sourceScreenName.replace(/'/g, "''");
     const key = keyFieldValue.toString().replace(/'/g, "''");
     const refresh = typeof refreshData === 'function' ? refreshData : devInterface?.refreshData;
     const toastFn = toast || devInterface?.toast;

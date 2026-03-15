@@ -2,6 +2,7 @@
  * Screen handler: Observation Approval (HSE_TgNrstMiscflwup)
  * Menu path: Safety -> Observation -> Observation Approval (from HSE.json)
  * Delegates custom buttons to ObservationService and runs observation tab logic for toolbar events.
+ * BUG_HSE_HSM_14_3_26: Custom Close (NRSTMISCENT_CLS) handled in ObservationService.handleCloseButton with desktop parity.
  */
 
 import {
@@ -42,6 +43,7 @@ const TAB_NEW_SERIAL_CONFIG = {
 };
 
 export function ButtonClicked(eventObj) {
+  // BUG_HSE_HSM_14_3_26: Close (NRSTMISCENT_CLS) routed to handleCloseButton in ObservationService
   const { Button_Name, strScrTag } = eventObj || {};
   const devInterface = eventObj.devInterfaceObj || {};
   const buttonName = Button_Name ? Button_Name.toString().toUpperCase() : '';

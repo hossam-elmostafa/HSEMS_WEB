@@ -83,6 +83,7 @@ export async function runMultipleSqlAndRefresh(devInterfaceObj, sqlStatements, m
 
 /**
  * Simple screen caption by form tag (C++ GetScrCptnByTag(66, formTag, "") replacement).
+ * BUG_HSE_HSM_14_3_26_17_33: Observation screens added so reject tracing tab Source Screen uses caption (desktop behaviour).
  */
 export function getScreenCaption(strScrTag) {
   if (!strScrTag) return '';
@@ -102,6 +103,10 @@ export function getScreenCaption(strScrTag) {
     'HSE_TGACDNTFOLLWUPDT': 'Incident Preliminary Follow-Up',
     'HSE_TGINCDNTINVSTGTNENTRY': 'Incident Investigation Entry',
     'HSE_TGINCDNTINVSTGTNAPRVL': 'Incident Investigation Approval',
+    // BUG_HSE_HSM_14_3_26_17_33: Observation screens – tracing tab Source Screen must be caption not tag (desktop uses GetScrCptnByTag).
+    'HSE_TGNRSTMISCENT': 'Observation Entry',
+    'HSE_TGNRSTMISCCNFRMTN': 'Observation Review',
+    'HSE_TGNRSTMISCFLWUP': 'Observation Approval',
   };
   return map[t] || strScrTag;
 }
