@@ -1,5 +1,10 @@
 import { applayDisabledTags } from '../utils/menuUtils';
 import { getScreenHandler } from '../screenHandlers/index';
+import { getDevInterface } from './buttonEvents.js';
+import {
+  getAccidentConfirmationPolicyAllowsReviewScreen,
+  INCIDENT_PRELIMINARY_REVIEW_MENU_TAG,
+} from '../services/ModuleButtonHandlers/moduleButtonHandlersUtils.js';
 
 /**
  * @name beforeRenderAppMenu
@@ -10,14 +15,19 @@ import { getScreenHandler } from '../screenHandlers/index';
  * 
  * This event Must return updated menu object or if no update happen then return original menu object as in code
  */
-export async function beforeRenderAppMenu(menuObj) {   
-  let disabledTags = [];  // array of menu items you would like to disable,you can name it as you want.
+export async function beforeRenderAppMenu(menuObj) {
+  let disabledTags = [];
 
-  // TODO : add any menu item tag you want to disable to disabledTags array 'based on your application logic'
-  // ex : if I want to disable menu item with tag tag_1 then I will write this code
-  // if(disable_your_menu_item_condition) {
-  //  disabledTags.push("tag_1");
-  // }
+  // Incident Preliminary Review: hide/disable when Accident Confirmation policy is off (C++ CheckPolicy HSEPLC_ACDNTCNFRMTNRQRD)
+  try {
+    const dev = getDevInterface();
+    const allowed = await getAccidentConfirmationPolicyAllowsReviewScreen(dev || {});
+    if (!allowed) {
+      disabledTags.push(INCIDENT_PRELIMINARY_REVIEW_MENU_TAG);
+    }
+  } catch (e) {
+    console.warn('[Web_HSE] beforeRenderAppMenu policy check:', e);
+  }
 
   // return menu after update 'This code should not removed'
   let updatedMenu = {};
@@ -80,18 +90,17 @@ export async function beforeRenderCustomActions(userObj, tag, actionsList) {
  *   strMsg: "",
  * };
  */
-export function onMenuItemClicked(userObj, strScrTag, callBackFn) {
+export async function onMenuItemClicked(userObj, strScrTag, callBackFn) {
   const screenHandler = getScreenHandler(strScrTag);
   if (screenHandler && typeof screenHandler.onMenuItemClicked === 'function') {
-    screenHandler.onMenuItemClicked(userObj, strScrTag, callBackFn);
+    await screenHandler.onMenuItemClicked(userObj, strScrTag, callBackFn);
+    return;
   }
-  let retVal = {
+  callBackFn({
     isAllowed: true,
-    strScrCriteria: "",
-    strMsg: "",
-  };
-  // TODO : Your application login here...
-  callBackFn(retVal);
+    strScrCriteria: '',
+    strMsg: '',
+  });
 }
 
 /**

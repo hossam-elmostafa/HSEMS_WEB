@@ -210,6 +210,200 @@ async function handleCloseCar(eventObj, devInterfaceObj, formTag) {
   }
 }
 
+// RQ_HSE_13_3_26_1_43: Pending CAR reject/cancel context (mirrors observation pendingRejectObservation mechanism)
+let pendingRejectCAR = null;
+
+export function setPendingRejectCAR(info) {
+  pendingRejectCAR = info ? { ...info } : null;
+}
+
+export function clearPendingRejectCAR() {
+  pendingRejectCAR = null;
+}
+
+export function getPendingRejectCAR() {
+  return pendingRejectCAR;
+}
+
+// RQ_HSE_13_3_26_1_43: C++ InsertIntoTracingTabProcess → EXECUTE ChangeEntityStatus
+async function executeChangeEntityStatus(executeSQLAsync, prmky, sourceScreenName, userName, actionDescription) {
+  const sql = `EXECUTE ChangeEntityStatus '${escapeSqlString(prmky)}','${escapeSqlString(sourceScreenName)}','${escapeSqlString(userName)}','HSE_CRENTRY_','CRENTRY_CRSTT','PRMKEY','02','${escapeSqlString(actionDescription)}'`;
+  await executeSQLAsync(sql);
+}
+
+// RQ_HSE_13_3_26_1_43: C++ AcceptCARProcess for HSE_TGCRRVW – policy check, tracing, status 10, save
+async function handleAcceptCarReview(eventObj, devInterfaceObj) {
+  const { executeSQLPromise, FormSetField, FormGetField, doToolbarAction, refreshData, getUserName, getValFromRecordSet } = devInterfaceObj || {};
+  if (!executeSQLPromise || !FormSetField) return;
+  const strPrmKy = getCurrentRecordPRMKY(eventObj);
+  if (!strPrmKy) return;
+
+  let bUpdateAcceptedRecord = true;
+
+  // C++: Bugs-2-2024.4 – check if CAR Review Info is enabled in policy for this CAR source
+  try {
+    const strCARSource = (typeof FormGetField === 'function' ? FormGetField('HSE_TGCRRVW', 'CRENTRY_CRSRC') : '') || '';
+    const policyRs = await executeSQLPromise(`SELECT HSEPLC_ADT_CRBSS, HSEPLC_ADT_ENBCRRVWINF FROM HSE_HSEPLC_ADT`);
+    const policyRow = policyRs?.recordset?.[0] ?? policyRs?.[0];
+    if (policyRow) {
+      const strCARBasis = (policyRow.HSEPLC_ADT_CRBSS ?? policyRow.hseplc_adt_crbss ?? '').toString().trim();
+      const strEnableRvwInf = (policyRow.HSEPLC_ADT_ENBCRRVWINF ?? policyRow.hseplc_adt_enbcrrvwinf ?? 'N').toString().trim();
+      if (strCARSource === strCARBasis && strEnableRvwInf === 'Y') {
+        const chkRs = await executeSQLPromise(`UPDATE HSE_CRRVWINF SET CrRvwInf_LnkWthMn=CrRvwInf_LnkWthMn WHERE CrRvwInf_LnkWthMn=${strPrmKy}`);
+        const rowsAffected = chkRs?.recordsAffected ?? chkRs?.rowsAffected?.[0] ?? chkRs?.rowsAffected ?? 0;
+        bUpdateAcceptedRecord = (rowsAffected === 1);
+      }
+    }
+  } catch (e) {
+    console.warn('[Web_HSE] AcceptCARProcess policy check:', e);
+  }
+
+  if (!bUpdateAcceptedRecord) {
+    if (devInterfaceObj.AskYesNoMessage) devInterfaceObj.AskYesNoMessage('Please insert a CAR Review Information');
+    return;
+  }
+
+  const strUserName = (typeof getUserName === 'function' ? getUserName() : '') || '';
+  try {
+    await executeChangeEntityStatus(executeSQLPromise, strPrmKy, 'CAR Review', strUserName, 'CAR Accepted');
+    FormSetField('HSE_TGCRRVW', 'CRENTRY_CRSTT', '10', 'scr');
+    if (typeof doToolbarAction === 'function') doToolbarAction('SAVE', 'HSE_TGCRRVW', '');
+    if (typeof refreshData === 'function') refreshData('', 'REFRESH_SELECTED');
+  } catch (e) {
+    console.warn('[Web_HSE] AcceptCARProcess execute:', e);
+    if (devInterfaceObj.AskYesNoMessage) devInterfaceObj.AskYesNoMessage('Error accepting CAR');
+  }
+}
+
+// RQ_HSE_13_3_26_1_43: C++ ApproveCARProcess2 for HSE_TGCRAPRVL – policy check, tracing, status 15, copy dept/project, save
+async function handleApproveCarApproval(eventObj, devInterfaceObj) {
+  const { executeSQLPromise, FormSetField, FormGetField, doToolbarAction, refreshData, getUserName } = devInterfaceObj || {};
+  if (!executeSQLPromise || !FormSetField) return;
+  const strPrmKy = getCurrentRecordPRMKY(eventObj);
+  if (!strPrmKy) return;
+
+  let bUpdateApprovedRecord = true;
+
+  // C++: Bugs-2-2024.5 – check if CAR Approval Info is enabled in policy
+  try {
+    const strCARSource = (typeof FormGetField === 'function' ? FormGetField('HSE_TGCRAPRVL', 'CRENTRY_CRSRC') : '') || '';
+    const policyRs = await executeSQLPromise(`SELECT HSEPLC_ADT_CRBSS, HSEPLC_ADT_ENBCRAPPINF FROM HSE_HSEPLC_ADT`);
+    const policyRow = policyRs?.recordset?.[0] ?? policyRs?.[0];
+    if (policyRow) {
+      const strCARBasis = (policyRow.HSEPLC_ADT_CRBSS ?? policyRow.hseplc_adt_crbss ?? '').toString().trim();
+      const strEnableAppInf = (policyRow.HSEPLC_ADT_ENBCRAPPINF ?? policyRow.hseplc_adt_enbcrappinf ?? 'N').toString().trim();
+      if (strCARSource === strCARBasis && strEnableAppInf === 'Y') {
+        const chkRs = await executeSQLPromise(`UPDATE HSE_CRAPPRVLINF SET CRAPPRVLINF_LnkWthMn=CRAPPRVLINF_LnkWthMn WHERE CRAPPRVLINF_LnkWthMn=${strPrmKy}`);
+        const rowsAffected = chkRs?.recordsAffected ?? chkRs?.rowsAffected?.[0] ?? chkRs?.rowsAffected ?? 0;
+        bUpdateApprovedRecord = (rowsAffected === 1);
+      }
+    }
+  } catch (e) {
+    console.warn('[Web_HSE] ApproveCARProcess2 policy check:', e);
+  }
+
+  if (!bUpdateApprovedRecord) {
+    if (devInterfaceObj.AskYesNoMessage) devInterfaceObj.AskYesNoMessage('Please insert a CAR Approval Information');
+    return;
+  }
+
+  const strUserName = (typeof getUserName === 'function' ? getUserName() : '') || '';
+  try {
+    await executeChangeEntityStatus(executeSQLPromise, strPrmKy, 'CAR Approval', strUserName, 'CAR Approved');
+    FormSetField('HSE_TGCRAPRVL', 'CRENTRY_CRSTT', '15', 'scr');
+
+    // C++: copy Concerned Department and Project from Approval Info to main screen
+    try {
+      const infoRs = await executeSQLPromise(`SELECT CrApprvlInf_CncrnDprt, CrApprvlInf_Prjct FROM HSE_CRAPPRVLINF WHERE CRAPPRVLINF_LnkWthMn=${strPrmKy}`);
+      const infoRow = infoRs?.recordset?.[0] ?? infoRs?.[0];
+      if (infoRow) {
+        const dept = (infoRow.CrApprvlInf_CncrnDprt ?? infoRow.CRAPPRVLINF_CNCRNDPRT ?? '').toString().trim();
+        const prj = (infoRow.CrApprvlInf_Prjct ?? infoRow.CRAPPRVLINF_PRJCT ?? '').toString().trim();
+        if (dept) FormSetField('HSE_TGCRAPRVL', 'CRENTRY_CNCDPR', dept, 'scr');
+        if (prj) FormSetField('HSE_TGCRAPRVL', 'CRENTRY_PRJ', prj, 'scr');
+      }
+    } catch (cpyErr) {
+      console.warn('[Web_HSE] ApproveCARProcess2 copy dept/project:', cpyErr);
+    }
+
+    if (typeof doToolbarAction === 'function') doToolbarAction('SAVE', 'HSE_TGCRAPRVL', '');
+    if (typeof refreshData === 'function') refreshData('', 'REFRESH_SELECTED');
+  } catch (e) {
+    console.warn('[Web_HSE] ApproveCARProcess2 execute:', e);
+    if (devInterfaceObj.AskYesNoMessage) devInterfaceObj.AskYesNoMessage('Error approving CAR');
+  }
+}
+
+// RQ_HSE_13_3_26_1_43: C++ RejectCARProcess – after reject reason entered, ChangeEntityStatus + status change + save
+const CAR_REJECT_STATUS_BY_SCREEN = {
+  'HSE_TGCRRVW': '02',
+  'HSE_TGCRAPRVL': '06',
+  'HSE_TGACTNSENTRY': '11',
+  'HSE_TGACTNSRVIW': '12',
+  'HSE_TGCRFLOUP': '15',
+};
+
+const CAR_REJECT_ACTION_BY_SCREEN = {
+  'HSE_TGCRRVW': 'Entry Rejected',
+  'HSE_TGCRAPRVL': 'Entry Rejected',
+  'HSE_TGACTNSENTRY': 'Entry Rejected',
+  'HSE_TGACTNSRVIW': 'CAR Rejected',
+  'HSE_TGCRFLOUP': 'CAR Rejected',
+};
+
+const CAR_SCREEN_CAPTION = {
+  'HSE_TGCRRVW': 'CAR Review',
+  'HSE_TGCRAPRVL': 'CAR Approval',
+  'HSE_TGACTNSENTRY': 'Actions Entry',
+  'HSE_TGACTNSRVIW': 'Actions Review',
+  'HSE_TGCRFLOUP': 'CAR Follow Up',
+  'HSE_TGCRENTRY': 'CAR Entry',
+};
+
+/**
+ * RQ_HSE_13_3_26_1_43: Execute pending CAR reject/cancel action after user enters reject reason and clicks OK.
+ * Called from ObservationService.js when RJCTRSN_BTN_OK fires for a CAR module type.
+ */
+export async function handleRejectReasonOkForCAR(devInterface) {
+  if (!pendingRejectCAR) {
+    console.warn('[Web_HSE] No pending CAR rejection info found.');
+    return false;
+  }
+
+  const { screenTag, prmky, action, newStatus, actionDescription, sourceScreenName } = pendingRejectCAR;
+  const executeSQLAsync = devInterface?.executeSQLPromise || devInterface?.executeSQL;
+  const getUserName = devInterface?.getUserName || pendingRejectCAR.getUserName;
+  const FormSetField = devInterface?.FormSetField || pendingRejectCAR.FormSetField;
+  const doToolbarAction = devInterface?.doToolbarAction || pendingRejectCAR.doToolbarAction;
+  const refreshData = devInterface?.refreshData || pendingRejectCAR.refreshData;
+
+  if (!executeSQLAsync || !prmky) {
+    clearPendingRejectCAR();
+    return false;
+  }
+
+  const userName = (typeof getUserName === 'function' ? getUserName() : '') || '';
+
+  try {
+    await executeChangeEntityStatus(executeSQLAsync, prmky, sourceScreenName, userName, actionDescription);
+
+    if (typeof FormSetField === 'function') {
+      FormSetField(screenTag, 'CRENTRY_CRSTT', newStatus, 'scr');
+    }
+    if (typeof doToolbarAction === 'function') {
+      doToolbarAction('SAVE', screenTag, '');
+    }
+    if (typeof refreshData === 'function') {
+      refreshData('', 'REFRESH_SELECTED');
+    }
+  } catch (e) {
+    console.error('[Web_HSE] CAR reject/cancel execute error:', e);
+  }
+
+  clearPendingRejectCAR();
+  return true;
+}
+
 /**
  * Main entry: handle CAR custom button. Returns true if the button was handled for this screen.
  * @param {string} buttonName - e.g. VIEW_CAR_REVIEW_INFO
@@ -252,6 +446,24 @@ export async function handleCarButton(buttonName, strScrTag, eventObj, devInterf
   if (btn === 'REJECT_CAR') {
     const src = REJECT_SOURCE_BY_SCREEN[scr];
     if (src && typeof openScr === 'function' && strPrimKey) {
+      // RQ_HSE_13_3_26_1_43: C++ RejectCARProcess – set pending context so OK button triggers ChangeEntityStatus + status change
+      const rejectStatus = CAR_REJECT_STATUS_BY_SCREEN[scr];
+      const rejectAction = CAR_REJECT_ACTION_BY_SCREEN[scr];
+      const caption = CAR_SCREEN_CAPTION[scr] || scr;
+      if (rejectStatus && rejectAction) {
+        setPendingRejectCAR({
+          screenTag: scr,
+          prmky: strPrimKey,
+          action: 'REJECT_CAR',
+          newStatus: rejectStatus,
+          actionDescription: rejectAction,
+          sourceScreenName: caption,
+          getUserName: devInterfaceObj?.getUserName,
+          FormSetField: devInterfaceObj?.FormSetField,
+          doToolbarAction: devInterfaceObj?.doToolbarAction,
+          refreshData: devInterfaceObj?.refreshData,
+        });
+      }
       openRejectReasonScreen(openScr, src, strPrimKey);
       return true;
     }
@@ -292,8 +504,21 @@ export async function handleCarButton(buttonName, strScrTag, eventObj, devInterf
     }
   }
 
+  // RQ_HSE_13_3_26_1_43: C++ CANCEL_CAR on Approval – set pending with status 20, "CAR Cancelled"
   if (btn === 'CANCEL_CAR' && scr === 'HSE_TGCRAPRVL') {
     if (openScr && strPrimKey) {
+      setPendingRejectCAR({
+        screenTag: scr,
+        prmky: strPrimKey,
+        action: 'CANCEL_CAR',
+        newStatus: '20',
+        actionDescription: 'CAR Cancelled',
+        sourceScreenName: 'CAR Approval',
+        getUserName: devInterfaceObj?.getUserName,
+        FormSetField: devInterfaceObj?.FormSetField,
+        doToolbarAction: devInterfaceObj?.doToolbarAction,
+        refreshData: devInterfaceObj?.refreshData,
+      });
       openRejectReasonScreen(openScr, 'CRCTVEACCENT-AP', strPrimKey);
       return true;
     }
@@ -307,8 +532,9 @@ export async function handleCarButton(buttonName, strScrTag, eventObj, devInterf
   }
 
   if (btn === 'ACCEPT_CAR') {
-    if (scr === 'HSE_TGCRRVW' && openScr && strPrimKey) {
-      openCarReviewInfo(openScr, strPrimKey, 'CRCTVEACCENT-RV');
+    // RQ_HSE_13_3_26_1_43: C++ AcceptCARProcess – check policy, tracing via ChangeEntityStatus, status 10, save
+    if (scr === 'HSE_TGCRRVW') {
+      await handleAcceptCarReview(eventObj, devInterfaceObj);
       return true;
     }
     if (scr === 'HSE_TGACTNSRVIW') {
@@ -341,14 +567,11 @@ export async function handleCarButton(buttonName, strScrTag, eventObj, devInterf
     }
   }
 
+  // RQ_HSE_13_3_26_1_43: C++ ApproveCARProcess2 – check policy, tracing via ChangeEntityStatus, status 15, copy dept/project, save
   if (btn === 'APPROVE_CAR' && scr === 'HSE_TGCRAPRVL') {
-    if (openScr && strPrimKey) {
-      openCarApproveInfo(openScr, strPrimKey);
-      return true;
-    }
+    await handleApproveCarApproval(eventObj, devInterfaceObj);
+    return true;
   }
 
   return false;
 }
-
-export { getCurrentRecordPRMKY, getFieldFromRecord, openRejectReasonScreen };

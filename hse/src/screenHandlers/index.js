@@ -125,6 +125,8 @@ import * as HSE_TgWstDspslEntry from './Environment/Waste Management/Waste_Dispo
 import * as HSE_ChmclRgstr from './Environment/Chemical Register/Chemical_Register.js';
 import * as HSE_TgEnvMntrPlan from './Environment/Environment Measures/Environmental_Monitoring_Plan.js';
 import * as HSE_TgEnvMntrExctn from './Environment/Environment Measures/Environmental_Measures.js';
+import * as HSE_TgEnvMsrEntry from './Environment/Environment Measures/Environmental_Measure_Entry.js'; // RQ_HSE_23_3_26_21_14
+import * as HSE_TgEnvMntrActvtPltnt from './Environment/Environment Measures/Environmental_Measures_Popup.js'; // RQ_HSE_23_3_26_21_14
 import * as HSE_AspctsEntryAtEntry from './Environment/Aspects Register/Aspects_Entry.js';
 import * as HSE_AspctsRvwAtRvw from './Environment/Aspects Register/Aspects_Review.js';
 import * as HSE_TgIncdntFlshRprt from './Safety/Incident/Incident_Flash_Entry.js';
@@ -138,6 +140,7 @@ import * as HSE_TgIncdntInvstgtnEntry from './Safety/Incident/Incident_Investiga
 import * as HSE_TgIncdntInvstgtnAprvl from './Safety/Incident/Incident_Investigation_Approval.js';
 import * as HSE_TgrskassmntEnt from './Safety/Risk Assessment/Risk_Assessment_Entry.js';
 import * as HSE_TgrskassmntApr from './Safety/Risk Assessment/Risk_Assessment_Confirmation.js';
+import * as HSE_TgRskAssmntFollwUpdt from './Safety/Risk Assessment/Risk_Assessment_Follow-Up.js'; // RQ_HSE_23_3_26_6_00
 import * as HSE_TgAwrnsPlnEntry from './Safety/Awareness/Awareness_Plan_Entry.js';
 import * as HSE_TgAwrnsPlnAprvl from './Safety/Awareness/Awareness_Plan_Approval.js';
 import * as HSE_TgAwrnsPlnExctn from './Safety/Awareness/Awareness_Plan_Execution.js';
@@ -145,9 +148,11 @@ import * as HSE_TgRscuPlnEntry from './Safety/Rescue Plan/Rescue_Plan_Entry.js';
 import * as HSE_TgToolsEquipDstrbtn from './Safety/Safety_Tools.js';
 import * as HSE_TgPTWsrgstrEnt from './Safety/Summary Permits/PTW_Register_Entry.js';
 import * as HSE_TgPTWsrgstrcnfrmtn from './Safety/Summary Permits/PTW_Register_Confirmation.js';
+import * as HSE_TgPTWsrgstrCls from './Safety/Summary Permits/PTW_Register_Close.js'; // RQ_HSE_23_3_26_6_00
 import * as HSE_TgSitSrvyEnt from './Performance/Site Survey/Site_Survey_Entry.js';
 import * as HSE_TgSitSrvyCnfrmtn from './Performance/Site Survey/Site_Survey_Confirmation.js';
 import * as HSE_TgSitSrvyFlwup from './Performance/Site Survey/Site_Survey_Result_Entry.js';
+import * as HSE_TgSitSrvyRqrdActn from './Performance/Site Survey/Site_Survey_Required_Actions_Popup.js'; // RQ_HSE_23_3_26_22_44
 import * as HSE_EQInspctnRqust from './Performance/EQ Inspection/EQ_Inspection_Request.js';
 import * as HSE_EQInspctnRsult from './Performance/EQ Inspection/EQ_Inspection_Result.js';
 import * as HSE_EQInspctnWrk from './Performance/EQ Inspection/In-Site_EQ.js';
@@ -309,6 +314,8 @@ const SCREEN_HANDLERS = {
   'HSE_ChmclRgstr': HSE_ChmclRgstr,
   'HSE_TgEnvMntrPlan': HSE_TgEnvMntrPlan,
   'HSE_TgEnvMntrExctn': HSE_TgEnvMntrExctn,
+  'HSE_TgEnvMsrEntry': HSE_TgEnvMsrEntry, // RQ_HSE_23_3_26_21_14
+  'HSE_TgEnvMntrActvtPltnt': HSE_TgEnvMntrActvtPltnt, // RQ_HSE_23_3_26_21_14
   'HSE_AspctsEntryAtEntry': HSE_AspctsEntryAtEntry,
   'HSE_AspctsRvwAtRvw': HSE_AspctsRvwAtRvw,
   'HSE_TgIncdntFlshRprt': HSE_TgIncdntFlshRprt,
@@ -322,6 +329,7 @@ const SCREEN_HANDLERS = {
   'HSE_TgIncdntInvstgtnAprvl': HSE_TgIncdntInvstgtnAprvl,
   'HSE_TgrskassmntEnt': HSE_TgrskassmntEnt,
   'HSE_TgrskassmntApr': HSE_TgrskassmntApr,
+  'HSE_TgRskAssmntFollwUpdt': HSE_TgRskAssmntFollwUpdt, // RQ_HSE_23_3_26_6_00
   'HSE_TgAwrnsPlnEntry': HSE_TgAwrnsPlnEntry,
   'HSE_TgAwrnsPlnAprvl': HSE_TgAwrnsPlnAprvl,
   'HSE_TgAwrnsPlnExctn': HSE_TgAwrnsPlnExctn,
@@ -329,9 +337,11 @@ const SCREEN_HANDLERS = {
   'HSE_TgToolsEquipDstrbtn': HSE_TgToolsEquipDstrbtn,
   'HSE_TgPTWsrgstrEnt': HSE_TgPTWsrgstrEnt,
   'HSE_TgPTWsrgstrcnfrmtn': HSE_TgPTWsrgstrcnfrmtn,
+  'HSE_TgPTWsrgstrCls': HSE_TgPTWsrgstrCls, // RQ_HSE_23_3_26_6_00
   'HSE_TgSitSrvyEnt': HSE_TgSitSrvyEnt,
   'HSE_TgSitSrvyCnfrmtn': HSE_TgSitSrvyCnfrmtn,
   'HSE_TgSitSrvyFlwup': HSE_TgSitSrvyFlwup,
+  'HSE_TgSitSrvyRqrdActn': HSE_TgSitSrvyRqrdActn,
   'HSE_EQInspctnRqust': HSE_EQInspctnRqust,
   'HSE_EQInspctnRsult': HSE_EQInspctnRsult,
   'HSE_EQInspctnWrk': HSE_EQInspctnWrk,

@@ -22,6 +22,15 @@ export function setDevInterface(devInterface) {
 }
 
 /**
+ * Read-only access to the dev interface (SQL, messages, etc.) for menu events and screen handlers.
+ * Set by `hse.js` via `setDevInterface` after app init.
+ * @returns {Object}
+ */
+export function getDevInterface() {
+  return devInterfaceObj;
+}
+
+/**
  * Mark a screen as in new mode or not (C++ setbNewMode / m_ScreensInNewMode).
  * @param {string} strFormTag - Screen tag (header form tag)
  * @param {boolean} isNewMode - true to set, false to clear
@@ -223,7 +232,7 @@ export async function ButtonClicked(eventObj) {
     const normalizedStrScrTag = strScrTag ? strScrTag.toString().toUpperCase() : '';
     const normalizedButtonName = Button_Name ? Button_Name.toString().toUpperCase() : '';
 
-    // 1) Try module button handlers (Risk Assessment, Site Survey, PTW, Incident, Audit, Performance Measurement, Rescue Plan)
+    // 1) Try module button handlers (Risk Assessment, Site Survey, PTW, Incident, Audit, Performance Measurement, Rescue Plan — RQ_HSE_23_3_26_17_05: cancel / return / CMS_RSNS)
     if (normalizedButtonName && normalizedStrScrTag) {
       const moduleHandled = await handleModuleButton(normalizedButtonName, normalizedStrScrTag, eventObj, devInterfaceObj);
       if (moduleHandled) return;

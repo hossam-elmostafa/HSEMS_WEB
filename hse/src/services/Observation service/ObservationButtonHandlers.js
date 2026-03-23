@@ -18,8 +18,9 @@ import { getScreenCaption } from "../ModuleButtonHandlers/moduleButtonHandlersUt
  * - RQ_HSM_22_12_25_11_43: Handle Reward Entry Completed Custom Button
  */
 
-// Store pending reject execution info (module-level). Supports Observation, PTW, Incident, Risk Assessment, Vehicle Accident.
-// moduleType: 'OBSERVATION' | 'PTW' | 'INCIDENT' | 'RISK' | 'VEHICLE_ACCIDENT'
+// Store pending reject execution info (module-level). Supports Observation, PTW, Incident, Risk Assessment, Site Survey, Vehicle Accident, Awareness, Rescue Plan cancel.
+// moduleType: 'OBSERVATION' | 'PTW' | 'INCIDENT' | 'RISK' | 'SITE_SURVEY' | 'VEHICLE_ACCIDENT' | 'AWARENESS' | 'RESCUE_CANCEL'
+// RQ_HSE_23_3_26_17_05, RQ_HSE_23_3_26_22_44 (SITE_SURVEY)
 let pendingRejectObservation = null;
 
 export function setPendingRejectObservation(observationInfo) {
@@ -31,9 +32,9 @@ export function clearPendingRejectObservation() {
 }
 
 /**
- * Set pending reject for non-Observation modules (PTW, Incident, Risk Assessment, Vehicle Accident).
+ * Set pending reject for non-Observation modules (PTW, Incident, Risk Assessment, Vehicle Accident, Awareness).
  * When user clicks OK on reject reason screen, the appropriate SP or update will run.
- * @param {string} moduleType - 'PTW' | 'INCIDENT' | 'RISK' | 'VEHICLE_ACCIDENT' | 'POTENTIAL_HAZARD' | 'LOSS_ACCIDENT'
+ * @param {string} moduleType - 'PTW' | 'INCIDENT' | 'RISK' | 'VEHICLE_ACCIDENT' | 'POTENTIAL_HAZARD' | 'LOSS_ACCIDENT' | 'AWARENESS'
  * @param {string} keyFieldValue - record key
  * @param {string} sourceScreenName - form/screen tag for SourceScreenName
  * @param {Object} devInterface - getUserName, executeSQLPromise/executeSQL, refreshData, toast
@@ -302,6 +303,7 @@ export async function handleConfirmButton(buttonName, screenTag, eventObj, devIn
       getUserName,
       refreshData,
       AskYesNoMessage,
+      doToolbarAction,
     } = devInterface;
 
     // Validate required functions
@@ -319,6 +321,13 @@ export async function handleConfirmButton(buttonName, screenTag, eventObj, devIn
 
     const executeSQLAsync = executeSQLPromise || executeSQL;
 
+    const formTag = screenTag || 'HSE_TGNRSTMISCCNFRMTN';
+
+    // RQ_HSE_13_3_26_1_43: C++ saves before confirm – DoToolBarAction(TOOLBAR_SAVE, strFormTag, "")
+    if (typeof doToolbarAction === 'function') {
+      doToolbarAction('SAVE', formTag, '');
+    }
+
     // Extract event data
     const { fullRecord: fullRecordArr, fullRecordArrKeys } = eventObj || {};
 
@@ -333,8 +342,6 @@ export async function handleConfirmButton(buttonName, screenTag, eventObj, devIn
         firstRecord?.NRSTMISCNUM ||
         '';
     }
-
-    const formTag = screenTag || 'HSE_TGNRSTMISCCNFRMTN';
 
     // Fallback: read from form if still empty
     if (!keyFieldValue) {
@@ -388,7 +395,20 @@ export async function handleConfirmButton(buttonName, screenTag, eventObj, devIn
         'Reject reason for this record exists.\n\rDo you want to delete it and approve this observation?';
       const confirmed = await AskYesNoMessage('Prompt', msg);
       if (!confirmed) {
-        // User chose not to proceed
+        return;
+      }
+      // RQ_HSE_13_3_26_1_43: C++ deletes pending reject reasons before confirming
+      try {
+        const deleteRjctSql = `
+          DELETE FROM HSE_RJCTRSN
+          WHERE RJCTRSN_MODULETYPE = 'NRSTMISCENT-L1'
+            AND RJCTRSN_LINKWITHMAIN = '${keyFieldValue.replace(/'/g, "''")}'
+            AND ISNULL(RJCTRSN_TRACINGLNK, 0) = 0
+        `;
+        await executeSQLAsync(deleteRjctSql);
+      } catch (delErr) {
+        console.error('[Web_HSE] Failed to delete reject reasons:', delErr);
+        toast.error('Error deleting reject reasons. Please try again.');
         return;
       }
     }
@@ -955,6 +975,111 @@ export async function handleEntryCompleteButton(buttonName, screenTag, eventObj,
 }
 
 /**
+ * RQ_HSE_13_3_26_1_43: Auto-generate a CAR record from a closed observation when Require CAR = Y.
+ * C++ ref: NearMissFollowUpCategory::DisplayCustomButtonClicked (lines 69-205)
+ * Reads observation form fields, queries policy, inserts into HSE_CRENTRY, copies images, shows toast.
+ */
+async function generateCARFromObservation(formTag, obsKeyFieldValue, executeSQLAsync, FormGetField, userName) {
+  const readField = (field) => {
+    try { return (FormGetField(formTag, field) || FormGetField('HSE_vwNRSTMISCENT', field) || '').toString().trim(); }
+    catch (_) { return ''; }
+  };
+  const esc = (v) => (v == null ? '' : String(v).replace(/'/g, "''"));
+
+  const strRequireCAR = readField('NRSTMISCENT_RQRCR');
+  if (strRequireCAR !== 'Y') return;
+
+  // CAR Date = today  (YYYY-MM-DD for SQL Server)
+  const now = new Date();
+  const strCARDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const strCARYear = String(now.getFullYear());
+
+  // Next CAR number for this year
+  const carNumRs = await executeSQLAsync(`SELECT ISNULL(MAX(CRENTRY_CRN)+1, 1) AS NewCARNo FROM HSE_CRENTRY WHERE CRENTRY_CRYR='${esc(strCARYear)}'`);
+  const carNumRow = carNumRs?.recordset?.[0] ?? carNumRs?.[0];
+  const strCARNo = String(carNumRow?.NewCARNo ?? carNumRow?.newcarno ?? 1);
+
+  // Policy fields
+  let CARStatus = '';
+  let strCARSource = '';
+  try {
+    const polRs = await executeSQLAsync(`SELECT HSEOBSRVTN_GnrCrStt, HSEOBSRVTN_CrBss FROM HSE_HSEOBSRVTN`);
+    const polRow = polRs?.recordset?.[0] ?? polRs?.[0];
+    if (polRow) {
+      CARStatus = (polRow.HSEOBSRVTN_GnrCrStt ?? polRow.hseobsrvtn_gnrcrstt ?? '').toString().trim();
+      strCARSource = (polRow.HSEOBSRVTN_CrBss ?? polRow.hseobsrvtn_crbss ?? '').toString().trim();
+    }
+  } catch (_) { /* policy not found – use defaults */ }
+  if (CARStatus.length < 2) CARStatus = CARStatus.padStart(2, '0');
+
+  // Owner department from policy
+  let strOwnerDept = '';
+  try {
+    const deptRs = await executeSQLAsync(`SELECT HSEPLC_OWNRDPRT FROM HSE_HSEPLC`);
+    const deptRow = deptRs?.recordset?.[0] ?? deptRs?.[0];
+    strOwnerDept = (deptRow?.HSEPLC_OWNRDPRT ?? deptRow?.hseplc_ownrdprt ?? '').toString().trim();
+  } catch (_) {}
+
+  // Employee (login user employee code – already resolved earlier in handleCloseButton's caller)
+  let strEmployee = '';
+  try {
+    const empRs = await executeSQLAsync(`SELECT EMPLOYEE_NO FROM CMN_EMPLOYEE WHERE EMPLOYEE_USERID = '${esc(userName)}'`);
+    const empRow = empRs?.recordset?.[0] ?? empRs?.[0];
+    strEmployee = (empRow?.EMPLOYEE_NO ?? empRow?.employee_no ?? '').toString().trim();
+  } catch (_) {}
+
+  // Observation fields
+  const strNCDescription = readField('NRSTMISCENT_NRSTMISCDESC');
+  const strEvidence = readField('NRSTMISCENT_SFTYOBSRV');
+  const strSite = readField('NRSTMISCENT_SIT');
+  const strLocation = readField('NRSTMISCENT_LOCTYP');
+  const strArea = readField('NRSTMISCENT_WRKLOC');
+  const strConcernedDepartment = readField('NRSTMISCENT_CNCRNDDEP');
+  const strProject = readField('NRSTMISCENT_PRJCT');
+  const strTXNYear = readField('NRSTMISCENT_YR');
+  const strTXNNo = readField('NRSTMISCENT_NO');
+
+  // CAR Serial No. based on year + source
+  let strCARSerialNo = '1';
+  try {
+    const srlRs = await executeSQLAsync(`SELECT ISNULL(MAX(CRENTRY_CRSRLN)+1, 1) AS SRL FROM HSE_CRENTRY WHERE CRENTRY_CRYR='${esc(strCARYear)}' AND CRENTRY_CRSRC='${esc(strCARSource)}'`);
+    const srlRow = srlRs?.recordset?.[0] ?? srlRs?.[0];
+    strCARSerialNo = String(srlRow?.SRL ?? srlRow?.srl ?? 1);
+  } catch (_) {}
+
+  // C++: temp table for trigger-based tracing during INSERT
+  try {
+    await executeSQLAsync(`IF OBJECT_ID('tempdb..##TEMP_HSE_TABLE') IS NULL CREATE TABLE ##TEMP_HSE_TABLE(KEYrec VARCHAR(50) NOT NULL, VALUErec VARCHAR(50), CONSTRAINT PK_TEMP_HSE_TABLE PRIMARY KEY CLUSTERED (KEYrec))`);
+    await executeSQLAsync(`DELETE FROM ##TEMP_HSE_TABLE`);
+    await executeSQLAsync(`INSERT INTO ##TEMP_HSE_TABLE(KEYrec, VALUErec) VALUES('ActionDescription','Creating new CAR')`);
+    await executeSQLAsync(`INSERT INTO ##TEMP_HSE_TABLE(KEYrec, VALUErec) VALUES('SrcScreen','Observation Approval')`);
+    await executeSQLAsync(`INSERT INTO ##TEMP_HSE_TABLE(KEYrec, VALUErec) VALUES('UserID','${esc(userName)}')`);
+  } catch (tmpErr) {
+    console.warn('[Web_HSE] CAR generation temp table setup:', tmpErr);
+  }
+
+  // INSERT INTO HSE_CRENTRY
+  const cols = `CRENTRY_CRDT,CRENTRY_CRYR,CRENTRY_CRN,CRENTRY_CRSTT,CRENTRY_DPR,CRENTRY_NM,CRENTRY_NCDSC,CRENTRY_EVD,CRENTRY_CRPRR,CRENTRY_ST,CRENTRY_LCT,CRENTRY_AR,CRENTRY_CNCDPR,CRENTRY_ATGNR,CRENTRY_CRSRC,CRENTRY_CRSRLN,CRENTRY_TXNYR,CRENTRY_TXNN${strProject ? ',CRENTRY_PRJ' : ''}`;
+  const vals = `'${esc(strCARDate)}','${esc(strCARYear)}','${esc(strCARNo)}','${esc(CARStatus)}','${esc(strOwnerDept)}','${esc(strEmployee)}','${esc(strNCDescription)}','${esc(strEvidence)}','m','${esc(strSite)}','${esc(strLocation)}','${esc(strArea)}','${esc(strConcernedDepartment)}','Y','${esc(strCARSource)}','${esc(strCARSerialNo)}','${esc(strTXNYear)}','${esc(strTXNNo)}'${strProject ? `,'${esc(strProject)}'` : ''}`;
+  await executeSQLAsync(`INSERT INTO HSE_CRENTRY (${cols}) VALUES (${vals})`);
+
+  // Copy images from observation to CAR
+  try {
+    const strPicture = readField('NRSTMISCENT_NRSTMISCNUM') || obsKeyFieldValue;
+    const prmRs = await executeSQLAsync(`SELECT PrmKy FROM HSE_CRENTRY WHERE CRENTRY_CRDT='${esc(strCARDate)}' AND CRENTRY_CRYR='${esc(strCARYear)}' AND CRENTRY_CRN='${esc(strCARNo)}'`);
+    const prmRow = prmRs?.recordset?.[0] ?? prmRs?.[0];
+    const strPrmKy = (prmRow?.PrmKy ?? prmRow?.prmky ?? prmRow?.PRMKY ?? '').toString();
+    if (strPrmKy) {
+      await executeSQLAsync(`EXEC CopyImages 'HSEMS','HSE_VWNRSTMISCENT','NRSTMISCENT_NRSTMISCNUM','${esc(strPicture)}','NRSTMISCENT_OBSRVTNIMG','HSE_CRENTRY','PrmKy','${esc(strPrmKy)}','CRENTRY_NCPHT'`);
+    }
+  } catch (imgErr) {
+    console.warn('[Web_HSE] CopyImages:', imgErr);
+  }
+
+  toast.success(`CAR is generated with CAR No. = ${strCARYear}-${strCARNo}`);
+}
+
+/**
  * Handle Close button click (Observation Approval / Follow-up).
  * BUG_HSE_HSM_14_3_26: Desktop parity – validations and actions per Observation_Approval_Close_Button_Desktop_Behavior.md
  * (RQ_HSM_22_12_11_28) Handle Close Custom Button
@@ -1062,10 +1187,15 @@ export async function handleCloseButton(buttonName, screenTag, eventObj, devInte
     try {
       await executeSQLAsync(spSql);
 
-      // BUG_HSE_HSM_14_3_26: Desktop does not insert tracing after SP – closeNearMissTXN does status + tracing (and CAR if required)
-      // C++: RefreshScreen("", REFRESH_SELECTED);
-      refreshData('', 'REFRESH_SELECTED');
+      // RQ_HSE_13_3_26_1_43: C++ CAR auto-generation – client-side INSERT after closeNearMissTXN
+      // C++ ref: NearMissFollowUpCategory.cpp lines 69-205
+      try {
+        await generateCARFromObservation(formTag, keyFieldValue, executeSQLAsync, FormGetField, userName);
+      } catch (carErr) {
+        console.error('[Web_HSE] Error in CAR auto-generation (observation still closed):', carErr);
+      }
 
+      refreshData('', 'REFRESH_SELECTED');
       toast.success('Observation closed successfully');
     } catch (error) {
       console.error('[Web_HSE] Error executing closeNearMissTXN:', error);
@@ -1081,7 +1211,7 @@ export async function handleCloseButton(buttonName, screenTag, eventObj, devInte
  * Handle Reject Reason screen OK button click
  * C++: CRejectReason::RejectReasonOk() - sets gbUpdateRejectedRecord = true
  * This is called when RJCTRSN_BTN_OK is clicked in the reject reason screen
- * Supports: Observation (rejectObservation), PTW (rejectPTW), Incident (rejectIncident), Risk (rejectRiskAssessment), Vehicle Accident (updateTXNSts status 3)
+ * Supports: Observation (rejectObservation), PTW (rejectPTW), Incident (rejectIncident), Risk (rejectRiskAssessment), Site Survey (rejectSitSrvy), Vehicle Accident (updateTXNSts status 3), Awareness (AwrnsPlnRejected), Rescue Plan cancel (cancelRscuPlan) — RQ_HSE_23_3_26_15_42, RQ_HSE_23_3_26_17_05, RQ_HSE_23_3_26_22_44
  * RQ_HSM_22_12_10_50: Handle Reject Custom Button
  * @param {Object} devInterface - Object containing devInterface functions
  */
@@ -1099,6 +1229,15 @@ export async function handleRejectReasonOkButton(devInterface) {
     let sourceScreenName = (pendingRejectObservation.sourceScreenName || formTag || '').toString();
     const isObservation = !moduleType || moduleType === 'OBSERVATION';
     if (isObservation && formTag && (sourceScreenName.startsWith('HSE_TG') || sourceScreenName === formTag)) {
+      sourceScreenName = getScreenCaption(formTag) || sourceScreenName;
+    }
+    // RQ_HSE_23_3_26_3_36 — Incident / PTW / Risk: if pending stored screen tag, resolve caption for rejectIncident etc.
+    // RQ_HSE_23_3_26_15_42 — Awareness Plan Approval caption for tracing
+    if (
+      ['INCIDENT', 'PTW', 'RISK', 'SITE_SURVEY', 'AWARENESS', 'RESCUE_CANCEL'].includes(moduleType) &&
+      formTag &&
+      (String(formTag).startsWith('HSE_TG') || String(formTag).startsWith('HSE_Tg'))
+    ) {
       sourceScreenName = getScreenCaption(formTag) || sourceScreenName;
     }
     sourceScreenName = sourceScreenName.replace(/'/g, "''");
@@ -1123,6 +1262,11 @@ export async function handleRejectReasonOkButton(devInterface) {
         spSql = `EXECUTE rejectRiskAssessment '${key}','${sourceScreenName}','${userName}'`;
         successMsg = `Risk assessment ${keyFieldValue} rejected successfully`;
         break;
+      // RQ_HSE_23_3_26_22_44 — same argument order as desktop rejectSitSrvy(Key, SourceScreenCaption, User)
+      case 'SITE_SURVEY':
+        spSql = `EXECUTE rejectSitSrvy '${key}','${sourceScreenName}','${userName}'`;
+        successMsg = `Site survey ${keyFieldValue} rejected successfully`;
+        break;
       case 'VEHICLE_ACCIDENT':
         spSql = `EXECUTE updateTXNSts '${key}','3','VCLACDNTENT','VCLACDNTENT_VCLACDNTNO'`;
         successMsg = `Vehicle accident ${keyFieldValue} rejected successfully`;
@@ -1135,6 +1279,31 @@ export async function handleRejectReasonOkButton(devInterface) {
         spSql = `EXECUTE updateTXNSts '${key}','3','LOSSACDNTENT','LOSSACDNTENT_ACTHZRDNO'`;
         successMsg = `Loss accident ${keyFieldValue} rejected successfully`;
         break;
+      // RQ_HSE_23_3_26_15_42: reason text captured in HSE_RJCTRSN via reject reason screen; SP second arg empty string (desktop passes dialog text)
+      case 'AWARENESS':
+        spSql = `EXECUTE AwrnsPlnRejected ${key},''`;
+        successMsg = `Awareness plan ${keyFieldValue} rejected successfully`;
+        break;
+      // RQ_HSE_23_3_26_17_05: OpenReasonsScr parity — verify at least one reason row exists before cancel (desktop: OpenReasonsScr returns false if COUNT=0)
+      case 'RESCUE_CANCEL': {
+        const rsnCountSql = `SELECT COUNT(0) AS CNT FROM HSE_RJCTRSN WHERE RJCTRSN_MODULETYPE = 'RSCUPLN-L1' AND RJCTRSN_LINKWITHMAIN = '${key}' AND ISNULL(RJCTRSN_TRACINGLNK, 0) = 0`;
+        try {
+          const rsnData = await executeSQLAsync(rsnCountSql);
+          const rsnRow = rsnData?.recordset?.[0] ?? rsnData?.[0]?.recordset?.[0] ?? rsnData?.[0];
+          const rsnCnt = parseInt(rsnRow?.CNT ?? rsnRow?.cnt ?? Object.values(rsnRow || {})[0], 10) || 0;
+          if (rsnCnt === 0) {
+            console.warn('[Web_HSE] cancelRscuPlan aborted — no reason rows in HSE_RJCTRSN (desktop OpenReasonsScr would return false)');
+            if (toastFn && toastFn.warning) toastFn.warning('Cancel aborted — no cancel reason entered.');
+            clearPendingRejectObservation();
+            return;
+          }
+        } catch (cntErr) {
+          console.warn('[Web_HSE] cancelRscuPlan reason count check failed, proceeding:', cntErr);
+        }
+        spSql = `EXECUTE cancelRscuPlan '${key}',''`;
+        successMsg = `Rescue plan ${keyFieldValue} cancelled successfully`;
+        break;
+      }
       case 'OBSERVATION':
       default:
         spSql = `EXECUTE rejectObservation '${key}','${sourceScreenName}','${userName}'`;

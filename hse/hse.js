@@ -1,7 +1,8 @@
 /***********************************************************/
-/*
 /*  HSE Client Side Code
-/*
+ *  RQ_HSE_23_3_26_22_02: Aspects Register parity — isAdminUser, ChangeCriteria (WebInfra),
+ *  FormEnableButton tab toolbar, setScrLockedAttrb, C×L risk rank (WebInfra + aspectsRegisterPolicy).
+ */
 /***********************************************************/
 import { toast } from "react-toastify";
 
@@ -39,6 +40,7 @@ export default function useHSE(useDevInterfaceFun) {
     getScrNxtSegment,
     getScrNxtSegmentPromise,
     refreshData,
+    ChangeCriteria,
     getCurrentFormatedDate,
     setScreenDisableBtn,    
     downloadReportFile,
@@ -55,7 +57,8 @@ export default function useHSE(useDevInterfaceFun) {
     AskYesNoMessage,
     TabEnable,
     openAdvancedFilter,
-    changeCustomButtonProperty
+    changeCustomButtonProperty,
+    isAdminUser
   } = useDevInterfaceFun();
 
   let devInterfaceObj = {};
@@ -81,6 +84,7 @@ export default function useHSE(useDevInterfaceFun) {
   devInterfaceObj.getScrNxtSegment = getScrNxtSegment;
   devInterfaceObj.getScrNxtSegmentPromise = getScrNxtSegmentPromise;
   devInterfaceObj.refreshData = refreshData;
+  devInterfaceObj.ChangeCriteria = ChangeCriteria;
   devInterfaceObj.getCurrentFormatedDate = getCurrentFormatedDate;
   devInterfaceObj.setScreenDisableBtn = setScreenDisableBtn;
   devInterfaceObj.downloadReportFile = downloadReportFile;
@@ -101,6 +105,15 @@ export default function useHSE(useDevInterfaceFun) {
   devInterfaceObj.TabEnable = TabEnable;
   devInterfaceObj.openAdvancedFilter = openAdvancedFilter;
   devInterfaceObj.changeCustomButtonProperty = changeCustomButtonProperty;
+  // RQ_HSE_23_3_26_22_02: Aspects Register admin / department scoping (C++ IsAdminUser)
+  devInterfaceObj.isAdminUser =
+    typeof isAdminUser === 'function'
+      ? isAdminUser
+      : () => {
+          const u = getCurrentUserObj?.();
+          const t = (u?.Set_AS_Administrator ?? '').toString();
+          return t.toUpperCase().includes('ADMINISTRATOR');
+        };
   // BUG_HSE_HSM_14_3_26: expose getEmployeeCodeForLoginUser for Observation Approval Close and other flows
   devInterfaceObj.getEmployeeCodeForLoginUser = () => getEmployeeCodeForLoginUserImpl(devInterfaceObj);
 

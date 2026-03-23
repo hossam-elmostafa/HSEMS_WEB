@@ -11,9 +11,12 @@ import {
   getScreenCaption,
   escapeSqlString,
   buildUpdateStatusAndTracingSql,
+  isIncidentPreliminaryEntryScreenTag,
+  validateInjuredPersonCountMatchesHeader,
 } from './moduleButtonHandlersUtils.js';
 import { openRejectReasonScreen } from '../../utils/rejectReasonUtils.js';
 import { setPendingRejectForModule } from '../Observation service/ObservationButtonHandlers.js';
+import { handleEQInspectionModuleButtons } from './eqInspectionButtonHandlers.js';
 
 // ----- Risk Assessment (RiskAssessmentEntryCategory, RiskAssessmentApprovalCategory, RiskAssessmentFollowUpCategory) -----
 const RISK_TABLE = 'HSE_RSKASSMNTENT';
@@ -38,16 +41,33 @@ async function handleRiskAssessmentButton(buttonName, strScrTag, eventObj, devIn
     }
     return runTxnAndRefresh(devInterfaceObj, `EXECUTE completeRskAssmntTXN '${ek}','${es}','${eu}'`, 'Error completing risk assessment');
   }
+  // RQ_HSE_23_3_26_6_00: SAVE before confirm (desktop RiskAssessmentApprovalCategory parity)
   if (buttonName === 'RSKASSMNTENT_APRV' && RISK_APR_TAGS.some(t => scr === t)) {
     if (!key) return true;
+    const doToolbarAction = devInterfaceObj?.doToolbarAction;
+    if (typeof doToolbarAction === 'function') doToolbarAction('SAVE', eventObj?.strFormTag || strScrTag, '');
     return runTxnAndRefresh(devInterfaceObj, `EXECUTE confirmRskAssmntTXN '${ek}','${es}','${eu}'`, 'Error approving risk assessment');
   }
+  // RQ_HSE_23_3_26_6_00: SAVE before close (desktop RiskAssessmentFollowUpCategory parity)
   if (buttonName === 'RSKASSMNTENT_CLS' && RISK_FOLLOWUP_TAGS.some(t => scr === t)) {
     if (!key) return true;
+    const doToolbarAction = devInterfaceObj?.doToolbarAction;
+    if (typeof doToolbarAction === 'function') doToolbarAction('SAVE', eventObj?.strFormTag || strScrTag, '');
     return runTxnAndRefresh(devInterfaceObj, `EXECUTE closeRskAssmntTXN '${ek}','${eu}','${es}'`, 'Error closing risk assessment');
   }
   if (buttonName === 'RSKASSMNTENT_SHOWMATRIX') {
-    // Desktop: opens RiskAssessment.jpg from working folder. Web: optional — could open asset or do nothing.
+    return true;
+  }
+  // RQ_HSE_23_3_26_6_00: open potential hazard popup (desktop RiskAssessmentEntryCategory openScr HSE_TGPTNLHZRD)
+  if (buttonName === 'POTENTIAL_HAZARDS') {
+    const openScr = devInterfaceObj?.openScr;
+    if (typeof openScr === 'function') openScr('HSE_TGPTNLHZRD', '', true, key);
+    return true;
+  }
+  // RQ_HSE_23_3_26_6_00: open task responsibility popup (desktop RiskAssessmentEntryCategory openScr HSE_TGTskRsp)
+  if (buttonName === 'TASK_RESPONSIBILITY') {
+    const openScr = devInterfaceObj?.openScr;
+    if (typeof openScr === 'function') openScr('HSE_TGTskRsp', '', true, key);
     return true;
   }
   if (buttonName === 'RSKASSMNTENT_RJC') {
@@ -63,6 +83,7 @@ async function handleRiskAssessmentButton(buttonName, strScrTag, eventObj, devIn
 }
 
 // ----- Site Survey (SitSrvyCnfrmtnCategory, SitSrvyFlwupCategory, SitSrvyCategory reject) -----
+// RQ_HSE_23_3_26_22_44: SAVE before close; reject reason (SITSRVYENT-L1/L2) before rejectSitSrvy on Confirmation/Follow-up
 const SITSRVY_TABLE = 'HSE_SITSRVYENT';
 const SITSRVY_KEY_FIELD = 'SITSRVYENT_SITSRVYNO';
 
@@ -81,10 +102,23 @@ async function handleSiteSurveyButton(buttonName, strScrTag, eventObj, devInterf
   }
   if (buttonName === 'SITSRVYENT_CLS') {
     if (!key) return true;
+    const doToolbarAction = devInterfaceObj?.doToolbarAction;
+    if (typeof doToolbarAction === 'function') doToolbarAction('SAVE', eventObj?.strFormTag || strScrTag, '');
     return runTxnAndRefresh(devInterfaceObj, `EXECUTE closeSiteSurveyTXN '${ek}','${eu}','${es}'`, 'Error closing site survey');
   }
   if (buttonName === 'SITSRVYENT_RJCT') {
     if (!key) return true;
+    const openScr = devInterfaceObj?.openScr;
+    if (scr === 'HSE_TGSITSRVYCNFRMTN' && typeof openScr === 'function') {
+      openRejectReasonScreen(openScr, 'SITSRVYENT-L1', key);
+      setPendingRejectForModule('SITE_SURVEY', key, strScrTag, devInterfaceObj);
+      return true;
+    }
+    if (scr === 'HSE_TGSITSRVYFLWUP' && typeof openScr === 'function') {
+      openRejectReasonScreen(openScr, 'SITSRVYENT-L2', key);
+      setPendingRejectForModule('SITE_SURVEY', key, strScrTag, devInterfaceObj);
+      return true;
+    }
     return runTxnAndRefresh(devInterfaceObj, `EXECUTE rejectSitSrvy '${ek}','${es}','${eu}'`, 'Error rejecting site survey');
   }
   return false;
@@ -110,12 +144,18 @@ async function handlePTWButton(buttonName, strScrTag, eventObj, devInterfaceObj)
     }
     return runTxnAndRefresh(devInterfaceObj, `EXECUTE completePTWTXN '${ek}','${es}','${eu}'`, 'Error completing PTW');
   }
+  // RQ_HSE_23_3_26_6_00: SAVE before confirm (desktop PtwConfirmationCategory parity)
   if (buttonName === 'PTWSRGSTRENT_CNFRM') {
     if (!key) return true;
+    const doToolbarAction = devInterfaceObj?.doToolbarAction;
+    if (typeof doToolbarAction === 'function') doToolbarAction('SAVE', eventObj?.strFormTag || strScrTag, '');
     return runTxnAndRefresh(devInterfaceObj, `EXECUTE confirmPTWTXN '${ek}','${eu}','${es}'`, 'Error confirming PTW');
   }
+  // RQ_HSE_23_3_26_6_00: SAVE before close (desktop PtwClsCategory parity)
   if (buttonName === 'PTWSRGSTRENT_CLSPTW') {
     if (!key) return true;
+    const doToolbarAction = devInterfaceObj?.doToolbarAction;
+    if (typeof doToolbarAction === 'function') doToolbarAction('SAVE', eventObj?.strFormTag || strScrTag, '');
     return runTxnAndRefresh(devInterfaceObj, `EXECUTE closePTW '${ek}','${es}','${eu}'`, 'Error closing PTW');
   }
   if (buttonName === 'PTWSRGSTRENT_RJC') {
@@ -131,41 +171,189 @@ async function handlePTWButton(buttonName, strScrTag, eventObj, devInterfaceObj)
 }
 
 // ----- Incident (AccidentEntryCategory, AccidentConfirmationCategory, AccidentFollowUpCategory, IncdntInvstgtnAprvCategory) -----
+// RQ_HSE_23_3_26_3_36
 const ACDNT_TABLE = 'HSE_ACDNTENT';
 const ACDNT_KEY_FIELD = 'ACDNTENT_ACDNTNUM';
 
+/** C++ RefreshScreen("", REFRESH_SELECTED) after incident SPs — RQ_HSE_23_3_26_3_36 */
+async function runIncidentTxn(devInterfaceObj, sql, messageOnError = 'Operation failed') {
+  const { executeSQLPromise, refreshData, AskYesNoMessage } = devInterfaceObj || {};
+  if (!executeSQLPromise) return false;
+  try {
+    await executeSQLPromise(sql);
+    if (typeof refreshData === 'function') refreshData('', 'REFRESH_SELECTED');
+    return true;
+  } catch (e) {
+    console.warn('[Web_HSE] Incident txn:', e);
+    if (typeof AskYesNoMessage === 'function') AskYesNoMessage(messageOnError);
+    return false;
+  }
+}
+
+// RQ_HSE_23_3_26_3_36
+function incidentHasSelectedRecord(eventObj, key) {
+  if (key) return true;
+  const keys = eventObj?.fullRecordArrKeys;
+  if (keys && keys.length > 0) return true;
+  const fr = eventObj?.fullRecord ?? eventObj?.fullRecordArr;
+  return Array.isArray(fr) && fr.length > 0;
+}
+
+// RQ_HSE_23_3_26_3_36
 async function handleIncidentButton(buttonName, strScrTag, eventObj, devInterfaceObj) {
+  const scr = (strScrTag || '').toUpperCase();
   const key = getKeyFromEvent(eventObj, devInterfaceObj, { tableName: ACDNT_TABLE, keyFieldName: ACDNT_KEY_FIELD, formTag: strScrTag });
   const userName = (typeof devInterfaceObj?.getUserName === 'function' ? devInterfaceObj.getUserName() : '') || '';
   const sourceScreen = getScreenCaption(strScrTag) || 'Incident';
   const ek = escapeSqlString(key);
   const eu = escapeSqlString(userName);
   const es = escapeSqlString(sourceScreen);
+  const formTag = eventObj?.strFormTag || strScrTag || 'HSE_TGACDNTENT';
+  const executeSQLAsync = devInterfaceObj?.executeSQLPromise || devInterfaceObj?.executeSQL;
+  const doToolbarAction = devInterfaceObj?.doToolbarAction;
+  const AskYesNoMessage = devInterfaceObj?.AskYesNoMessage;
 
-  if (buttonName === 'ACDNTENT_ENTRYCMPLTD') {
-    if (!key) {
-      if (typeof devInterfaceObj?.AskYesNoMessage === 'function') devInterfaceObj.AskYesNoMessage('You must save the Record first');
-      return true;
-    }
-    return runTxnAndRefresh(devInterfaceObj, `EXECUTE completeAccidentTXN '${ek}','${es}','${eu}'`, 'Error completing incident');
-  }
-  if (buttonName === 'ACDNTENT_CNFRM' || buttonName === 'ACDNTENT_APRV') {
+  // Investigation Approval: direct rejectIncident (IncdntInvstgtnAprvCategory — no reject-reason dialog) — RQ_HSE_23_3_26_3_36
+  if (buttonName === 'ACDNTENT_RJC' && scr === 'HSE_TGINCDNTINVSTGTNAPRVL') {
     if (!key) return true;
-    return runTxnAndRefresh(devInterfaceObj, `EXECUTE confirmAccidentTXN '${ek}','${es}','${eu}'`, 'Error confirming incident');
+    await runIncidentTxn(
+      devInterfaceObj,
+      `EXECUTE rejectIncident '${ek}','${es}','${eu}'`,
+      'Error rejecting incident'
+    );
+    return true;
   }
-  if (buttonName === 'ACDNTENT_CLS') {
-    if (!key) return true;
-    return runTxnAndRefresh(devInterfaceObj, `EXECUTE closeAccidentTXN '${ek}','${eu}','${es}'`, 'Error closing incident');
+
+  // Preliminary Entry: desktop rejectRecord does not open dialog — no-op — RQ_HSE_23_3_26_3_36
+  if (buttonName === 'ACDNTENT_RJC' && isIncidentPreliminaryEntryScreenTag(strScrTag)) {
+    return true;
   }
+
+  // RQ_HSE_23_3_26_3_36 — Review/Follow-up reject: L1 vs L2 reject-reason module
   if (buttonName === 'ACDNTENT_RJC') {
     if (!key) return true;
     const openScr = devInterfaceObj?.openScr;
+    const rjctMod = scr === 'HSE_TGACDNTFOLLWUPDT' ? 'ACDNTENT-L2' : 'ACDNTENT-L1';
     if (typeof openScr === 'function') {
-      openRejectReasonScreen(openScr, 'ACDNTENT-L1', key);
+      openRejectReasonScreen(openScr, rjctMod, key);
       setPendingRejectForModule('INCIDENT', key, sourceScreen || strScrTag, devInterfaceObj);
     }
     return true;
   }
+
+  // RQ_HSE_23_3_26_3_36 — SAVE before closeAccidentTXN (desktop parity)
+  if (buttonName === 'ACDNTENT_CLS') {
+    if (!key) return true;
+    if (typeof doToolbarAction === 'function') doToolbarAction('SAVE', formTag, '');
+    return runIncidentTxn(
+      devInterfaceObj,
+      `EXECUTE closeAccidentTXN '${ek}','${eu}','${es}'`,
+      'Error closing incident'
+    );
+  }
+
+  // RQ_HSE_23_3_26_3_36 — SAVE + L1 reject-reason check/delete before confirmAccidentTXN
+  if (buttonName === 'ACDNTENT_CNFRM' || buttonName === 'ACDNTENT_APRV') {
+    if (!key) return true;
+    if (typeof doToolbarAction === 'function') doToolbarAction('SAVE', formTag, '');
+    let rejectReasonCount = 0;
+    if (executeSQLAsync) {
+      try {
+        const checkSql = `
+          SELECT COUNT(0) AS CNT FROM HSE_RJCTRSN
+          WHERE RJCTRSN_MODULETYPE = 'ACDNTENT-L1'
+            AND RJCTRSN_LINKWITHMAIN = '${ek}'
+            AND ISNULL(RJCTRSN_TRACINGLNK, 0) = 0
+        `;
+        const rs = await executeSQLAsync(checkSql);
+        const recordset = rs?.recordset || rs?.[0]?.recordset || [];
+        if (Array.isArray(recordset) && recordset.length > 0) {
+          const row = recordset[0];
+          const val = row.CNT ?? row.cnt ?? Object.values(row)[0];
+          rejectReasonCount = parseInt(val, 10) || 0;
+        }
+      } catch (err) {
+        console.warn('[Web_HSE] Incident confirm: reject reason check failed:', err);
+      }
+    }
+    if (rejectReasonCount > 0) {
+      const msg =
+        'Reject reason for this record exists.\n\rDo you want to delete it and confirm this incident?';
+      const confirmed =
+        typeof AskYesNoMessage === 'function' ? await AskYesNoMessage('Prompt', msg) : false;
+      if (!confirmed) return true;
+      try {
+        await executeSQLAsync(`
+          DELETE FROM HSE_RJCTRSN
+          WHERE RJCTRSN_MODULETYPE = 'ACDNTENT-L1'
+            AND RJCTRSN_LINKWITHMAIN = '${ek}'
+            AND ISNULL(RJCTRSN_TRACINGLNK, 0) = 0
+        `);
+      } catch (delErr) {
+        console.error('[Web_HSE] Failed to delete incident reject reasons:', delErr);
+        if (typeof AskYesNoMessage === 'function') AskYesNoMessage('Error deleting reject reasons.');
+        return true;
+      }
+    }
+    return runIncidentTxn(
+      devInterfaceObj,
+      `EXECUTE confirmAccidentTXN '${ek}','${es}','${eu}'`,
+      'Error confirming incident'
+    );
+  }
+
+  // Investigation Entry: ACDNTENT_ENTRYCMPLTD → completeAccidentTXN (IncdntInvstgtnEntryCategory) — RQ_HSE_23_3_26_3_36
+  if (buttonName === 'ACDNTENT_ENTRYCMPLTD') {
+    if (!key) {
+      if (typeof AskYesNoMessage === 'function') devInterfaceObj.AskYesNoMessage('You must save the Record first');
+      return true;
+    }
+    return runIncidentTxn(
+      devInterfaceObj,
+      `EXECUTE completeAccidentTXN '${ek}','${es}','${eu}'`,
+      'Error completing incident'
+    );
+  }
+
+  // Preliminary Entry: ACDNTENT_ENTCMPLT + ValidateBeforeIncdntEntryComplt prompt — RQ_HSE_23_3_26_3_36
+  if (buttonName === 'ACDNTENT_ENTCMPLT' && isIncidentPreliminaryEntryScreenTag(strScrTag)) {
+    if (!incidentHasSelectedRecord(eventObj, key)) {
+      if (typeof AskYesNoMessage === 'function') devInterfaceObj.AskYesNoMessage('You must save the Record first');
+      return true;
+    }
+    if (!key) {
+      if (typeof AskYesNoMessage === 'function') devInterfaceObj.AskYesNoMessage('You must save the Record first');
+      return true;
+    }
+    const injMatch = await validateInjuredPersonCountMatchesHeader(devInterfaceObj, key);
+    if (!injMatch.ok && injMatch.message) {
+      if (typeof AskYesNoMessage === 'function') devInterfaceObj.AskYesNoMessage(injMatch.message);
+      return true;
+    }
+    const rid = parseInt(String(key).trim(), 10);
+    if (!Number.isNaN(rid) && String(rid) === String(key).trim() && executeSQLAsync) {
+      try {
+        const vrs = await executeSQLAsync(`SELECT dbo.ValidateBeforeIncdntEntryComplt(${rid}) AS V`);
+        const row = vrs?.recordset?.[0] ?? vrs?.[0];
+        const v = (row?.V ?? row?.v ?? '').toString().trim().toUpperCase();
+        if (v === 'N') {
+          const msg =
+            'Some Recommended Actions don\'t have Linked Cause , proceed ?';
+          const ok =
+            typeof AskYesNoMessage === 'function' ? await AskYesNoMessage('Prompt', msg) : false;
+          if (!ok) return true;
+        }
+      } catch (valErr) {
+        console.warn('[Web_HSE] ValidateBeforeIncdntEntryComplt:', valErr);
+      }
+    }
+    return runIncidentTxn(
+      devInterfaceObj,
+      `EXECUTE completeAccidentTXN '${ek}','${es}','${eu}'`,
+      'Error completing incident'
+    );
+  }
+
   return false;
 }
 
@@ -231,22 +419,125 @@ async function handleAuditButton(buttonName, strScrTag, eventObj, devInterfaceOb
   return false;
 }
 
-// ----- Rescue Plan (RscuPlnCategory: RSCUPLN_PLNCLSD) -----
-async function handleRescuePlanButton(buttonName, strScrTag, eventObj, devInterfaceObj) {
-  if (buttonName !== 'RSCUPLN_PLNCLSD' && buttonName !== 'RSCUPLNENT_CLS') return false;
-  const key = getKeyFromEvent(eventObj, devInterfaceObj, { tableName: 'HSE_RSCUPLNENT', keyFieldName: 'RSCUPLNENT_RSCUPLNNO', formTag: strScrTag });
-  if (!key) return true;
-  const ek = escapeSqlString(key);
-  return runTxnAndRefresh(devInterfaceObj, `EXECUTE closeRscuPlan '${ek}'`, 'Error closing rescue plan');
+// ----- Rescue Plan (RscuPlnCategory.cpp parity) -----
+// RQ_HSE_23_3_26_17_05: cancel via reject-reason + cancelRscuPlan; return-to-entry (status ≥5 + Yes/No) + rtrnRscuPlnToEntry; tracing View cancel reason → CMS_RSNS; close unchanged.
+const RESCUE_PLN_MAIN_TABLE = 'HSE_RSCUPLN';
+const RESCUE_PLN_KEY_FIELD = 'RSCUPLN_PRMRYKY';
+const RESCUE_ENT_TABLE = 'HSE_RSCUPLNENT';
+const RESCUE_ENT_KEY_FIELD = 'RSCUPLNENT_RSCUPLNNO';
+
+function getRescuePlanPrimaryKey(eventObj, devInterfaceObj, strScrTag) {
+  let k = getKeyFromEvent(eventObj, devInterfaceObj, {
+    tableName: RESCUE_PLN_MAIN_TABLE,
+    keyFieldName: RESCUE_PLN_KEY_FIELD,
+    formTag: strScrTag,
+  });
+  if (!k) {
+    k = getKeyFromEvent(eventObj, devInterfaceObj, {
+      tableName: RESCUE_ENT_TABLE,
+      keyFieldName: RESCUE_ENT_KEY_FIELD,
+      formTag: strScrTag,
+    });
+  }
+  return k;
 }
 
-// ----- EQ Inspection (EQInspctnCategory: EQINSPCTN_ENTRYCMPLTD -> completeEQInspctn) -----
+async function handleRescuePlanButton(buttonName, strScrTag, eventObj, devInterfaceObj) {
+  const btn = String(buttonName || '').toUpperCase();
+  const sourceScreen = getScreenCaption(strScrTag) || 'Rescue Plan';
+  const FormGetField = devInterfaceObj?.FormGetField;
+  const openScr = devInterfaceObj?.openScr;
+  const AskYesNoMessage = devInterfaceObj?.AskYesNoMessage;
+
+  if (btn === 'RSCUPLN_PLNCLSD' || btn === 'RSCUPLNENT_CLS') {
+    const key = getKeyFromEvent(eventObj, devInterfaceObj, {
+      tableName: RESCUE_ENT_TABLE,
+      keyFieldName: RESCUE_ENT_KEY_FIELD,
+      formTag: strScrTag,
+    });
+    if (!key) return true;
+    // RQ_HSE_23_3_26_17_05: desktop comment — count rescue team tab rows must match header "No. rescue team members".
+    // C++ delegates to closeRscuPlan SP (no client-side check); add best-effort client guard matching comment intent.
+    const exec = devInterfaceObj?.executeSQLPromise;
+    if (exec && FormGetField) {
+      try {
+        const planKey = getRescuePlanPrimaryKey(eventObj, devInterfaceObj, strScrTag) || key;
+        const ePK = escapeSqlString(planKey);
+        const teamCntSql = `SELECT COUNT(0) AS CNT FROM HSE_RSCUPLN_RSCUTM WHERE RSCUPLN_RSCUTM_LNK = '${ePK}'`;
+        const teamData = await exec(teamCntSql);
+        const teamRow = teamData?.recordset?.[0] ?? teamData?.[0]?.recordset?.[0] ?? teamData?.[0];
+        const teamCnt = parseInt(teamRow?.CNT ?? teamRow?.cnt ?? Object.values(teamRow || {})[0], 10);
+        const hdrVal = FormGetField(RESCUE_PLN_MAIN_TABLE, 'RSCUPLN_NORSCUTMMMBRS', 'scr');
+        const hdrNum = parseInt(String(hdrVal ?? '').trim(), 10);
+        if (Number.isFinite(teamCnt) && Number.isFinite(hdrNum) && teamCnt !== hdrNum) {
+          if (typeof AskYesNoMessage === 'function') AskYesNoMessage("Sorry (rescue team members) doesn't match");
+          return true;
+        }
+      } catch (_teamErr) {
+        // Table/field may not exist in this deployment; fall through to SP which enforces its own rules.
+      }
+    }
+    const ek = escapeSqlString(key);
+    return runTxnAndRefresh(devInterfaceObj, `EXECUTE closeRscuPlan '${ek}'`, 'Error closing rescue plan');
+  }
+
+  if (btn === 'RSCUPLN_PLNCNCLD') {
+    const key = getRescuePlanPrimaryKey(eventObj, devInterfaceObj, strScrTag);
+    if (!key) {
+      if (typeof AskYesNoMessage === 'function') AskYesNoMessage('You must save the Record first');
+      return true;
+    }
+    if (typeof openScr === 'function') {
+      openRejectReasonScreen(openScr, 'RSCUPLN-L1', key);
+      setPendingRejectForModule('RESCUE_CANCEL', key, sourceScreen || strScrTag, devInterfaceObj);
+    }
+    return true;
+  }
+
+  if (btn === 'RSCUPLNINQURY_RTRNPLNTOENTRY') {
+    const key = getRescuePlanPrimaryKey(eventObj, devInterfaceObj, strScrTag);
+    if (!key) {
+      if (typeof AskYesNoMessage === 'function') AskYesNoMessage('You must save the Record first');
+      return true;
+    }
+    if (!FormGetField) return true;
+    const st = FormGetField(RESCUE_PLN_MAIN_TABLE, 'RSCUPLN_PLNSTTUS', 'scr');
+    const n = parseInt(String(st ?? '').trim(), 10);
+    if (!Number.isFinite(n) || n < 5) return true;
+    const msg = 'Are you sure to return (rescue plan) to entry ?';
+    const confirmed =
+      typeof AskYesNoMessage === 'function' ? await AskYesNoMessage('Prompt', msg) : false;
+    if (!confirmed) return true;
+    const ek = escapeSqlString(key);
+    await runTxnAndRefresh(
+      devInterfaceObj,
+      `EXECUTE rtrnRscuPlnToEntry '${ek}'`,
+      'Error returning rescue plan to entry'
+    );
+    return true;
+  }
+
+  if (btn === 'RSCUPLN_TRCNG_VWCNCLRSN') {
+    if (!FormGetField || typeof openScr !== 'function') return true;
+    let ref = FormGetField('HSE_RSCUPLN_TRCNG', 'RSCUPLN_TRCNG_REFCLOSRSN', 'tab');
+    if (ref == null || String(ref).trim() === '') {
+      ref = FormGetField('HSE_RSCUPLN_TRCNG', 'RSCUPLN_TRCNG_REFCLOSRSN', 'scr');
+    }
+    const rs = ref != null ? String(ref).trim() : '';
+    if (!rs) return true;
+    const er = escapeSqlString(rs);
+    const strCriteria = `SELECT * FROM CMS_RSNS WHERE (RSNS_RFREC = '${er}')`;
+    const defValObj = { RSNS_RFREC: rs };
+    openScr('CMS_RSNS', {}, strCriteria, 'list', false, defValObj, false, true);
+    return true;
+  }
+
+  return false;
+}
+
+// ----- EQ Inspection (EQInspctnCategory) — RQ_HSE_23_3_26_23_15 -----
 async function handleEQInspectionButton(buttonName, strScrTag, eventObj, devInterfaceObj) {
-  if (buttonName !== 'EQINSPCTN_ENTRYCMPLTD') return false;
-  const key = getKeyFromEvent(eventObj, devInterfaceObj, { tableName: 'HSE_EQINSPCTN', keyFieldName: 'EQINSPCTN_PRMRYKY', formTag: strScrTag });
-  if (!key) return true;
-  const ek = escapeSqlString(key);
-  return runTxnAndRefresh(devInterfaceObj, `EXECUTE completeEQInspctn '${ek}'`, 'Error completing EQ inspection');
+  return handleEQInspectionModuleButtons(buttonName, strScrTag, eventObj, devInterfaceObj);
 }
 
 // ----- Vehicle Accident (UpdateStatus + InsertRecIntoTracingTab; reject uses reject reason then updateTXNSts 3) -----
@@ -312,10 +603,19 @@ async function handleWasteButton(buttonName, strScrTag, eventObj, devInterfaceOb
   return false;
 }
 
-// ----- Awareness (AwrnsPlnEntryCompleted; AwrnsPlnApproved; AwrnsPlnRejected) -----
+// ----- Awareness (AwrnsPlnEntryCompleted; AwrnsPlnApproved; AwrnsPlnRejected; AwrnsPlnClosed) -----
+// RQ_HSE_23_3_26_15_42
 async function handleAwarenessButton(buttonName, strScrTag, eventObj, devInterfaceObj) {
   const key = getKeyFromEvent(eventObj, devInterfaceObj, { tableName: 'HSE_AWRNSPLN', keyFieldName: 'SerialPK', formTag: strScrTag });
-  if (!key) return false;
+  const sourceScreen = getScreenCaption(strScrTag) || 'Awareness Plan';
+
+  if (!key) {
+    if (buttonName === 'AWRNSPLNENTRY_PLNENTRYCMPLTD') {
+      if (typeof devInterfaceObj?.AskYesNoMessage === 'function') devInterfaceObj.AskYesNoMessage('You must save the Record first');
+      return true;
+    }
+    return true;
+  }
   const ek = escapeSqlString(key);
 
   if (buttonName === 'AWRNSPLNENTRY_PLNENTRYCMPLTD') {
@@ -324,9 +624,18 @@ async function handleAwarenessButton(buttonName, strScrTag, eventObj, devInterfa
   if (buttonName === 'AWRNSPLNAPRVL_PLNENTRYAPRVD') {
     return runTxnAndRefresh(devInterfaceObj, `EXECUTE AwrnsPlnApproved ${ek}`, 'Error approving awareness plan');
   }
+  // RQ_HSE_23_3_26_15_42: reject-reason popup parity with desktop OpenReasonsScr → AwrnsPlnRejected
   if (buttonName === 'AWRNSPLNAPRVL_PLNENTRYRJCTD') {
-    // Desktop opens OpenReasonsScr then rjctAwrnsPln(strAwrnsSrl, strCallerIdFinal). No standard reject reason screen; skip or use simple prompt.
-    return false;
+    const openScr = devInterfaceObj?.openScr;
+    if (typeof openScr === 'function') {
+      openRejectReasonScreen(openScr, 'AWRNSPLN-L1', key);
+      setPendingRejectForModule('AWARENESS', key, sourceScreen || strScrTag, devInterfaceObj);
+    }
+    return true;
+  }
+  // RQ_HSE_23_3_26_15_42: centralize close with other lifecycle buttons (desktop AwrnsPlnExctnCategory)
+  if (buttonName === 'AWRNSPLNEXCTN_PLNCLSD') {
+    return runTxnAndRefresh(devInterfaceObj, `EXECUTE AwrnsPlnClosed ${ek}`, 'Error closing awareness plan');
   }
   return false;
 }

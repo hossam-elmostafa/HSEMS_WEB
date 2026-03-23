@@ -22,7 +22,8 @@
  */
 export function OnBeforeBrowseButtonClick(strScrTag, strTabTag, brwsObj, fullRecord) {
   return new Promise((resolve, reject) => {
-    strScrTag = strScrTag.toString().toUpperCase();   
+    strScrTag = strScrTag.toString().toUpperCase();
+    // Incident Preliminary Entry tabs (HSE_TGACDNTENT*): use host browse as-is; adjust brwsObj here only if UAT shows desktop SQL/criteria mismatch.
     resolve(brwsObj);
   });
 }

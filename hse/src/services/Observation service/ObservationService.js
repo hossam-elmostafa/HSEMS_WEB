@@ -15,6 +15,9 @@ import {
   clearPendingRejectObservation,
 } from './ObservationButtonHandlers';
 
+// RQ_HSE_13_3_26_1_43: CAR reject/cancel pending mechanism
+import { getPendingRejectCAR, clearPendingRejectCAR, handleRejectReasonOkForCAR } from '../../utils/carCustomButtons.js';
+
 // Import tab management functions from ObservationTabManagement
 import {
   isObservationTabsEnabled,
@@ -83,16 +86,23 @@ export function sendButtonClickToBackend(buttonName, screenTag, eventObj = {}, d
   // Check both possible screen tag casings: HSE_TGRJCTRSN (uppercase) or HSE_TGRJCTRSN (mixed case from config)
   if ((normalizedScreenTag === 'HSE_TGRJCTRSN' || normalizedScreenTag === 'HSE_TGRJCTRSN') && normalizedButton === 'RJCTRSN_BTN_OK') {
     console.log('[Web_HSE] ✓ Reject reason screen OK button (RJCTRSN_BTN_OK) clicked!');
-    handleRejectReasonOkButton(devInterface);
-    return; // Don't process further
+    // RQ_HSE_13_3_26_1_43: check CAR pending reject/cancel first; fall back to observation handler
+    if (getPendingRejectCAR()) {
+      handleRejectReasonOkForCAR(devInterface);
+    } else {
+      handleRejectReasonOkButton(devInterface);
+    }
+    return;
   }
   
   // C++: CRejectReason::DisplayCustomButtonClicked - handles RJCTRSN_BTN_CANCEL
   // Check both possible screen tag casings: HSE_TGRJCTRSN (uppercase) or HSE_TGRJCTRSN (mixed case)
   if ((normalizedScreenTag === 'HSE_TGRJCTRSN' || normalizedScreenTag === 'HSE_TGRJCTRSN') && normalizedButton === 'RJCTRSN_BTN_CANCEL') {
     console.log('[Web_HSE] Reject reason screen Cancel button clicked. Clearing pending rejection.');
+    // RQ_HSE_13_3_26_1_43: clear both observation and CAR pending reject
     clearPendingRejectObservation();
-    return; // Don't process further
+    clearPendingRejectCAR();
+    return;
   }
   
   // Only process if this is an observation screen
