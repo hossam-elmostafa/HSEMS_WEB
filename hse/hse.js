@@ -48,7 +48,7 @@ export default function useHSE(useDevInterfaceFun) {
     updateScrRow,
     setScrLockedAttrb,
     downloadServerFile,
-    uploadEquipmentData,
+    uploadExcelData,
     changeFldObj,
     IsScrHaveSegment,
     updateRecordsSegment,
@@ -92,7 +92,7 @@ export default function useHSE(useDevInterfaceFun) {
   devInterfaceObj.updateScrRow = updateScrRow;
   devInterfaceObj.setScrLockedAttrb = setScrLockedAttrb;
   devInterfaceObj.downloadServerFile = downloadServerFile;
-  devInterfaceObj.uploadEquipmentData = uploadEquipmentData;
+  devInterfaceObj.uploadExcelData = uploadExcelData;
   devInterfaceObj.changeFldObj = changeFldObj;
   devInterfaceObj.IsScrHaveSegment = IsScrHaveSegment;
   devInterfaceObj.updateRecordsSegment = updateRecordsSegment;
