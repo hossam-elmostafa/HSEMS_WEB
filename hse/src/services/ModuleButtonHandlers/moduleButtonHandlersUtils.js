@@ -109,6 +109,7 @@ export async function runMultipleSqlAndRefresh(devInterfaceObj, sqlStatements, m
  * Simple screen caption by form tag (C++ GetScrCptnByTag(66, formTag, "") replacement).
  * BUG_HSE_HSM_14_3_26_17_33: Observation screens added so reject tracing tab Source Screen uses caption (desktop behaviour).
  * RQ_HSE_23_3_26_3_36: Incident Flash / Medical / Investigation tags mapped for reject tracing captions.
+ * RQ_HSE_5_4_26_14_19: extra Observation workflow tags for Comments tab SRCSCRN.
  */
 export function getScreenCaption(strScrTag) {
   if (!strScrTag) return '';
@@ -137,6 +138,11 @@ export function getScreenCaption(strScrTag) {
     'HSE_TGNRSTMISCENT': 'Observation Entry',
     'HSE_TGNRSTMISCCNFRMTN': 'Observation Review',
     'HSE_TGNRSTMISCFLWUP': 'Observation Approval',
+    // RQ_HSE_5_4_26_14_19 — Comments tab SRCSCRN + workflow captions
+    'HSE_TGNRMISRWARD': 'Observation Reward',
+    'HSE_TGNRSTMISCINQ': 'Observation Inquiry',
+    'HSE_TGOBSRVTNTRGTS': 'Observation Targets',
+    'HSE_TGNRMISTYPES': 'Observation Type',
     // RQ_HSE_23_3_26_15_42: Awareness / Training Plan — reject tracing & pending reject source caption
     'HSE_TGAWRNSPLNENTRY': 'Awareness Plan Entry',
     'HSE_TGAWRNSPLNAPRVL': 'Awareness Plan Approval',

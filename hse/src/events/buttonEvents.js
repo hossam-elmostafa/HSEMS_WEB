@@ -1,4 +1,5 @@
 import { sendButtonClickToBackend, isObservationTabsEnabled, manageObservationTabs, manageCommentsTabToolBar } from '../services/Observation service/ObservationService';
+import { getPendingRejectObservation } from '../services/Observation service/ObservationButtonHandlers.js';
 import { OBSERVATION_SCREEN_TAGS } from '../config/constants';
 import { getScreenHandler } from '../screenHandlers/index';
 import { handleModuleButton } from '../services/ModuleButtonHandlers/index.js';
@@ -12,6 +13,25 @@ let devInterfaceObj = {};
  * Use setbNewMode() to update; read via ScreensInNewMode[strScrTag] or hasScreenInNewMode(strScrTag).
  */
 export const ScreensInNewMode = Object.create(null);
+
+/**
+ * BUG_HSE_5_4_26_15_27: Ensure HSE_RJCTRSN INSERT payload includes link/module/tracing (hidden fields) so SQL unique index is not violated by (MISS-INFO, 0, NULL, NULL).
+ */
+function mergeRjctRsnSeedIntoFullRecord(fullRecord, seed) {
+  if (!fullRecord || typeof fullRecord !== 'object' || !seed) return;
+  const pairs = [
+    ['RJCTRSN_LINKWITHMAIN', seed.RJCTRSN_LINKWITHMAIN],
+    ['RJCTRSN_MODULETYPE', seed.RJCTRSN_MODULETYPE],
+    ['RJCTRSN_TRACINGLNK', seed.RJCTRSN_TRACINGLNK],
+  ];
+  for (const [key, val] of pairs) {
+    if (val === undefined || val === null) continue;
+    const cur = fullRecord[key];
+    if (cur === undefined || cur === null || cur === '') {
+      fullRecord[key] = val;
+    }
+  }
+}
 
 /**
  * Set devInterface functions for ButtonClicked handler
@@ -133,6 +153,22 @@ export async function toolBarButtonClicked(eventObj, callBackFn) {
   strScrTag = strScrTag ? strScrTag.toString().toUpperCase() : '';
   strBtnName = strBtnName ? strBtnName.toString().toUpperCase() : '';
   strTabTag = strTabTag ? strTabTag.toString().toUpperCase() : '';
+
+  // BUG_HSE_5_4_26_15_27: Pre-SAVE merge — WebInfra fullRecord for new reject rows can omit hidden RJCTRSN_* keys → duplicate key (MISS-INFO, 0, NULL, NULL).
+  if (
+    strBtnName === 'SAVE' &&
+    complete === 0 &&
+    strScrTag === 'HSE_TGRJCTRSN' &&
+    strTabTag === '' &&
+    isNewMode === true &&
+    fullRecord &&
+    typeof fullRecord === 'object'
+  ) {
+    const pending = getPendingRejectObservation();
+    if (pending?.rjctRsnSeed) {
+      mergeRjctRsnSeedIntoFullRecord(fullRecord, pending.rjctRsnSeed);
+    }
+  }
 
   const screenHandler = getScreenHandler(strScrTag);
   let observationTabsHandledByHandler = false;

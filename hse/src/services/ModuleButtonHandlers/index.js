@@ -14,6 +14,8 @@ import {
   isIncidentPreliminaryEntryScreenTag,
   validateInjuredPersonCountMatchesHeader,
 } from './moduleButtonHandlersUtils.js';
+import { handleTxnRequiredActionCarButton } from '../../utils/carTxnRequiredActionsSP.js';
+import { handleAuditResultConfirmationCarButton } from '../../utils/auditResultConfirmationCar.js';
 import { openRejectReasonScreen } from '../../utils/rejectReasonUtils.js';
 import { setPendingRejectForModule } from '../Observation service/ObservationButtonHandlers.js';
 import { handleEQInspectionModuleButtons } from './eqInspectionButtonHandlers.js';
@@ -744,6 +746,8 @@ export async function handleModuleButton(buttonName, strScrTag, eventObj, devInt
   const btn = String(buttonName).toUpperCase();
 
   const handlers = [
+    () => handleTxnRequiredActionCarButton(btn, strScrTag, eventObj, devInterfaceObj),
+    () => handleAuditResultConfirmationCarButton(btn, strScrTag, eventObj, devInterfaceObj),
     () => handleRiskAssessmentButton(btn, strScrTag, eventObj, devInterfaceObj),
     () => handleSiteSurveyButton(btn, strScrTag, eventObj, devInterfaceObj),
     () => handlePTWButton(btn, strScrTag, eventObj, devInterfaceObj),

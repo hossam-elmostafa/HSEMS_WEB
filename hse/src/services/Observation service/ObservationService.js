@@ -17,12 +17,26 @@ import {
 
 // RQ_HSE_13_3_26_1_43: CAR reject/cancel pending mechanism
 import { getPendingRejectCAR, clearPendingRejectCAR, handleRejectReasonOkForCAR } from '../../utils/carCustomButtons.js';
+// RQ_HSE_12_4_26_00_40 — corrective-action account reject (rejectCARTXN) after HSE_RJCTRSN OK
+import {
+  getPendingFoundationCarReject,
+  clearPendingFoundationCarReject,
+  handleRejectReasonOkForFoundationCarTxn,
+} from '../../utils/carFoundationTxnButtons.js';
+// RQ_HSE_12_4_26_00_40 — GAP-2/3/4: Layer 2 reject (Confirmation, Job Verification, Follow-Up Visit)
+import {
+  getPendingLayer2Reject,
+  clearPendingLayer2Reject,
+  handleRejectReasonOkForLayer2,
+} from '../../utils/carLayer2Buttons.js';
 
 // Import tab management functions from ObservationTabManagement
+// RQ_HSE_5_4_26_14_19 — re-export applyObservationCommentsSourceScreen for Comments tab SRCSCRN
 import {
   isObservationTabsEnabled,
   manageObservationTabs,
   manageCommentsTabToolBar,
+  applyObservationCommentsSourceScreen, // RQ_HSE_5_4_26_14_19
 } from './ObservationTabManagement';
 
 // Re-export for backward compatibility and for ModuleButtonHandlers (reject reason flow)
@@ -30,6 +44,7 @@ export {
   isObservationTabsEnabled,
   manageObservationTabs,
   manageCommentsTabToolBar,
+  applyObservationCommentsSourceScreen,
   setPendingRejectObservation,
   setPendingRejectForModule,
   clearPendingRejectObservation,
@@ -44,6 +59,8 @@ export {
  * This file has been refactored to delegate to:
  * - ObservationButtonHandlers.js: All button click handlers
  * - ObservationTabManagement.js: Tab enabling/disabling and Comments tab management
+ *
+ * RQ_HSE_5_4_26_14_19 — exports applyObservationCommentsSourceScreen (Comments tab SRCSCRN).
  */
 
 /**
@@ -86,9 +103,16 @@ export function sendButtonClickToBackend(buttonName, screenTag, eventObj = {}, d
   // Check both possible screen tag casings: HSE_TGRJCTRSN (uppercase) or HSE_TGRJCTRSN (mixed case from config)
   if ((normalizedScreenTag === 'HSE_TGRJCTRSN' || normalizedScreenTag === 'HSE_TGRJCTRSN') && normalizedButton === 'RJCTRSN_BTN_OK') {
     console.log('[Web_HSE] ✓ Reject reason screen OK button (RJCTRSN_BTN_OK) clicked!');
-    // RQ_HSE_13_3_26_1_43: check CAR pending reject/cancel first; fall back to observation handler
-    if (getPendingRejectCAR()) {
-      handleRejectReasonOkForCAR(devInterface);
+    // RQ_HSE_12_4_26_00_40 — GAP-2/3/4: Layer 2 reject (Confirmation, Job Verification, Follow-Up Visit)
+    if (getPendingLayer2Reject()) {
+      void handleRejectReasonOkForLayer2(devInterface, eventObj);
+    // RQ_HSE_12_4_26_00_40 — foundation CAR txn reject (Actions Received / Under Execution) before header CAR reject
+    } else if (getPendingFoundationCarReject()) {
+      // RQ_HSE_12_4_26_00_40 — pass RJCTRSN screen fullRecord for rejectCARTXN 5th-arg parity
+      void handleRejectReasonOkForFoundationCarTxn(devInterface, eventObj);
+    } else if (getPendingRejectCAR()) {
+      // RQ_HSE_13_3_26_1_43: check CAR pending reject/cancel first; fall back to observation handler
+      handleRejectReasonOkForCAR(devInterface, eventObj);
     } else {
       handleRejectReasonOkButton(devInterface);
     }
@@ -100,8 +124,11 @@ export function sendButtonClickToBackend(buttonName, screenTag, eventObj = {}, d
   if ((normalizedScreenTag === 'HSE_TGRJCTRSN' || normalizedScreenTag === 'HSE_TGRJCTRSN') && normalizedButton === 'RJCTRSN_BTN_CANCEL') {
     console.log('[Web_HSE] Reject reason screen Cancel button clicked. Clearing pending rejection.');
     // RQ_HSE_13_3_26_1_43: clear both observation and CAR pending reject
+    // RQ_HSE_12_4_26_00_40
     clearPendingRejectObservation();
     clearPendingRejectCAR();
+    clearPendingFoundationCarReject();
+    clearPendingLayer2Reject(); // RQ_HSE_12_4_26_00_40 — GAP-2/3/4
     return;
   }
   

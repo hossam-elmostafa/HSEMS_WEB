@@ -1,6 +1,13 @@
 import { toast } from "react-toastify";
 // BUG_HSE_HSM_14_3_26_17_33: use getScreenCaption so reject tracing tab Source Screen is caption (desktop behaviour)
 import { getScreenCaption } from "../ModuleButtonHandlers/moduleButtonHandlersUtils.js";
+// RQ_HSE_12_4_26_00_40 — M6: CAR serial allocation + insert retry on duplicate key
+import {
+  getNextAllocatedCrentryCrn,
+  getNextAllocatedCrentryCrsrln,
+} from "../../utils/carCrentrySerialAllocation.js";
+// RQ_HSE_12_4_26_00_40 — GAP-5: trigger context in same batch as HSE_CRENTRY INSERT
+import { buildCrentryTriggerContextBatchSql } from "../../utils/carTriggerContextBatch.js";
 
 /**
  * ObservationButtonHandlers.js
@@ -29,6 +36,62 @@ export function setPendingRejectObservation(observationInfo) {
 
 export function clearPendingRejectObservation() {
   pendingRejectObservation = null;
+}
+
+/**
+ * BUG_HSE_5_4_26_15_27: Pending reject context for HSE_RJCTRSN SAVE (merge link/module/tracing into fullRecord in toolBarButtonClicked).
+ * @returns {object | null}
+ */
+export function getPendingRejectObservation() {
+  return pendingRejectObservation;
+}
+
+/**
+ * BUG_HSE_5_4_26_15_27: Normalize FormGetField values (incl. DB combo { key, value }) for Observation header gates.
+ */
+function readNrstmiscHeaderFieldForRejectGate(FormGetField, formTag, field) {
+  if (typeof FormGetField !== 'function') return '';
+  let raw;
+  try {
+    raw = FormGetField(formTag, field, 'SCR');
+    if (raw == null || raw === '') raw = FormGetField('HSE_vwNRSTMISCENT', field, 'SCR');
+  } catch (_) {
+    return '';
+  }
+  if (raw == null || raw === undefined) return '';
+  if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+    if (Object.prototype.hasOwnProperty.call(raw, 'value') && raw.value != null && String(raw.value).trim() !== '') {
+      return String(raw.value).trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(raw, 'key') && raw.key != null && String(raw.key).trim() !== '') {
+      return String(raw.key).trim();
+    }
+  }
+  return String(raw).trim();
+}
+
+/**
+ * BUG_HSE_5_4_26_15_27: Desktop order — NearMissConfirmationCategory SAVE validates MUST "Preview Result" (NRSTMISCENT_PRVWRSLT);
+ * CommonCategoryWrapper then ValidateEmptyFields → "Please complete Master record before pressing button" (RQ-3-2021.4 SIT/LOCTYP/WRKLOC).
+ * WebInfra doToolbarAction(SAVE) is a stub, so enforce here before opening reject reason.
+ * @returns {{ ok: true } | { ok: false, message: string }}
+ */
+function validateObservationRejectDesktopParity(FormGetField, formTag) {
+  const ft = (formTag || '').toUpperCase();
+  if (ft !== 'HSE_TGNRSTMISCCNFRMTN' && ft !== 'HSE_TGNRSTMISCFLWUP') {
+    return { ok: true };
+  }
+  const prv = readNrstmiscHeaderFieldForRejectGate(FormGetField, formTag, 'NRSTMISCENT_PRVWRSLT');
+  if (!prv) {
+    return { ok: false, message: 'Preview Result must contain data.' };
+  }
+  const site = readNrstmiscHeaderFieldForRejectGate(FormGetField, formTag, 'NRSTMISCENT_SIT');
+  const locTyp = readNrstmiscHeaderFieldForRejectGate(FormGetField, formTag, 'NRSTMISCENT_LOCTYP');
+  const wrkLoc = readNrstmiscHeaderFieldForRejectGate(FormGetField, formTag, 'NRSTMISCENT_WRKLOC');
+  if (!site || !locTyp || !wrkLoc) {
+    return { ok: false, message: 'Please complete Master record before pressing button' };
+  }
+  return { ok: true };
 }
 
 /**
@@ -174,6 +237,20 @@ export async function handleRejectButton(buttonName, screenTag, eventObj, devInt
 
     const executeSQLAsync = executeSQLPromise || executeSQL;
 
+    const formTag = screenTag || 'HSE_TGNRSTMISCCNFRMTN';
+
+    // BUG_HSE_5_4_26_15_27: Match desktop messages when Preview Result / master data incomplete (SAVE + ValidateEmptyFields parity; see validateObservationRejectDesktopParity)
+    const rejectParity = validateObservationRejectDesktopParity(FormGetField, formTag);
+    if (!rejectParity.ok) {
+      toast.warning(rejectParity.message);
+      return;
+    }
+
+    // BUG_HSE_5_4_26_15_27: C++ DoToolBarAction(SAVE) before Reject — same call pattern as handleConfirmButton / RQ_HSE_13_3_26_1_43 (WebInfra doToolbarAction SAVE is still a stub until platform wires handleSaveBtnClk)
+    if (typeof doToolbarAction === 'function') {
+      doToolbarAction('SAVE', formTag, '');
+    }
+
     // Extract event data
     const { fullRecord: fullRecordArr, fullRecordArrKeys } = eventObj || {};
 
@@ -189,13 +266,11 @@ export async function handleRejectButton(buttonName, screenTag, eventObj, devInt
         '';
     }
 
-    const formTag = screenTag || 'HSE_TGNRSTMISCCNFRMTN';
-
     // Fallback: read from form if still empty
     if (!keyFieldValue) {
       keyFieldValue =
-        FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM') ||
-        FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM') ||
+        FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM', 'SCR') ||
+        FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM', 'SCR') ||
         '';
     }
 
@@ -236,13 +311,23 @@ export async function handleRejectButton(buttonName, screenTag, eventObj, devInt
     let rejectReasonCountBefore = 0;
     try {
       const resultBefore = await executeSQLAsync(checkRejectReasonBeforeSql);
-      if (resultBefore && resultBefore.length > 0 && resultBefore[0]) {
+      // BUG_HSE_5_4_26_15_27: WebInfra returns { recordset: [...] }; plain array branch kept for executeSQL-style rows
+      const rs = resultBefore?.recordset || resultBefore?.[0]?.recordset;
+      if (Array.isArray(rs) && rs.length > 0) {
+        const row = rs[0];
+        const val = row.CNT ?? row.cnt ?? Object.values(row)[0];
+        rejectReasonCountBefore = parseInt(val, 10) || 0;
+      } else if (Array.isArray(resultBefore) && resultBefore.length > 0 && resultBefore[0]) {
         const countObj = resultBefore[0];
         rejectReasonCountBefore = parseInt(Object.values(countObj)[0] || 0, 10);
       }
     } catch (error) {
       console.warn('[Web_HSE] Error checking reject reason count before:', error);
     }
+
+    // BUG_HSE_5_4_26_15_27: openScr(..., isNewMode true) makes saveRec INSERT; unique index RJCTRSN_RJCTRSN_TRACINGLNK_LIN already has (MODULETYPE, TRACINGLNK, LINKWITHMAIN, …) for this observation → duplicate key. If a row exists, open as update (isNewMode false) and do not seed defValObj (load via criteria).
+    const rejectReasonIsNew = rejectReasonCountBefore === 0;
+    const openDefValForReject = rejectReasonIsNew ? defValObj : {};
 
     // Store info for executing rejectObservation after reject reason screen OK button is clicked
     // C++: After reject reason screen closes, checks getgbUpdateRejectedRecord() flag
@@ -258,6 +343,12 @@ export async function handleRejectButton(buttonName, screenTag, eventObj, devInt
       executeSQLAsync,
       refreshData,
       toast,
+      // BUG_HSE_5_4_26_15_27: SAVE fullRecord often drops hidden fields → NULL link/module + RJCTRSN_RJCTRSN=MISS-INFO duplicates unique index RJCTRSN_RJCTRSN_TRACINGLNK_LIN
+      rjctRsnSeed: {
+        RJCTRSN_LINKWITHMAIN: keyFieldValue,
+        RJCTRSN_MODULETYPE: moduleType,
+        RJCTRSN_TRACINGLNK: 0,
+      },
     });
 
     // Open the reject reason screen - it has its own built-in dialog
@@ -266,9 +357,12 @@ export async function handleRejectButton(buttonName, screenTag, eventObj, devInt
       screenTag: rejectReasonScreenTag,
       observationNumber: keyFieldValue,
       moduleType: moduleType,
+      rejectReasonIsNew,
+      rejectReasonCountBefore,
     });
-    
-    openScr(rejectReasonScreenTag, {}, criteria, 'edit', true, defValObj);
+
+    // BUG_HSE_5_4_26_15_27: isNewMode must match whether HSE_RJCTRSN row exists (see rejectReasonIsNew)
+    openScr(rejectReasonScreenTag, {}, criteria, 'edit', rejectReasonIsNew, openDefValForReject);
 
     // C++: After screen closes, if getgbUpdateRejectedRecord() == true, execute rejectObservation
     // In JS: We use ButtonClicked event to detect when RJCTRSN_BTN_OK is clicked
@@ -346,8 +440,8 @@ export async function handleConfirmButton(buttonName, screenTag, eventObj, devIn
     // Fallback: read from form if still empty
     if (!keyFieldValue) {
       keyFieldValue =
-        FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM') ||
-        FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM') ||
+        FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM', 'SCR') ||
+        FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM', 'SCR') ||
         '';
     }
 
@@ -356,13 +450,13 @@ export async function handleConfirmButton(buttonName, screenTag, eventObj, devIn
       return;
     }
 
-    // Check if there is a new reject reason for this record
-    // Equivalent to: IsNewRjcRsnExist('NRSTMISCENT-L1', keyFieldValue)
+    // GAP R3: Pending reject reasons — L1 (confirmation) and L2 (follow-up), matching C++ module types
+    const escKey = keyFieldValue.replace(/'/g, "''");
     const checkRejectSql = `
       SELECT COUNT(0) AS CNT
       FROM HSE_RJCTRSN
-      WHERE RJCTRSN_MODULETYPE = 'NRSTMISCENT-L1'
-        AND RJCTRSN_LINKWITHMAIN = '${keyFieldValue.replace(/'/g, "''")}'
+      WHERE RJCTRSN_MODULETYPE IN ('NRSTMISCENT-L1', 'NRSTMISCENT-L2')
+        AND RJCTRSN_LINKWITHMAIN = '${escKey}'
         AND ISNULL(RJCTRSN_TRACINGLNK, 0) = 0
     `;
 
@@ -392,17 +486,17 @@ export async function handleConfirmButton(buttonName, screenTag, eventObj, devIn
     // If reject reasons exist, ask the user before proceeding
     if (rejectReasonCount > 0) {
       const msg =
-        'Reject reason for this record exists.\n\rDo you want to delete it and approve this observation?';
+        'A reject reason exists for this observation (review or follow-up).\n\rDo you want to delete it and approve?';
       const confirmed = await AskYesNoMessage('Prompt', msg);
       if (!confirmed) {
         return;
       }
-      // RQ_HSE_13_3_26_1_43: C++ deletes pending reject reasons before confirming
+      // RQ_HSE_13_3_26_1_43 + GAP R3: delete pending L1/L2 rows before confirming
       try {
         const deleteRjctSql = `
           DELETE FROM HSE_RJCTRSN
-          WHERE RJCTRSN_MODULETYPE = 'NRSTMISCENT-L1'
-            AND RJCTRSN_LINKWITHMAIN = '${keyFieldValue.replace(/'/g, "''")}'
+          WHERE RJCTRSN_MODULETYPE IN ('NRSTMISCENT-L1', 'NRSTMISCENT-L2')
+            AND RJCTRSN_LINKWITHMAIN = '${escKey}'
             AND ISNULL(RJCTRSN_TRACINGLNK, 0) = 0
         `;
         await executeSQLAsync(deleteRjctSql);
@@ -495,13 +589,13 @@ export async function handleCancelButton(buttonName, screenTag, eventObj, devInt
       // Try view name first (most reliable), then form tag
       // Wrap in try-catch to handle cases where form/view doesn't exist
       try {
-        currentStatus = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_RECSTS') || '';
+        currentStatus = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_RECSTS', 'SCR') || '';
       } catch (e) {
         // Ignore error, try next option
       }
       if (!currentStatus) {
         try {
-          currentStatus = FormGetField(formTag, 'NRSTMISCENT_RECSTS') || '';
+          currentStatus = FormGetField(formTag, 'NRSTMISCENT_RECSTS', 'SCR') || '';
         } catch (e) {
           // Ignore error, use empty string
         }
@@ -534,20 +628,20 @@ export async function handleCancelButton(buttonName, screenTag, eventObj, devInt
     if (!keyFieldValue) {
       // Wrap in try-catch to handle cases where form/view doesn't exist
       try {
-        keyFieldValue = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM') || '';
+        keyFieldValue = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM', 'SCR') || '';
       } catch (e) {
         // Ignore error, try next option
       }
       if (!keyFieldValue) {
         try {
-          keyFieldValue = FormGetField(formTag, 'NrstMiscEnt_NrstMiscNum') || '';
+          keyFieldValue = FormGetField(formTag, 'NrstMiscEnt_NrstMiscNum', 'SCR') || '';
         } catch (e) {
           // Ignore error, try next option
         }
       }
       if (!keyFieldValue) {
         try {
-          keyFieldValue = FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM') || '';
+          keyFieldValue = FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM', 'SCR') || '';
         } catch (e) {
           // Ignore error, use empty string
         }
@@ -806,17 +900,27 @@ export async function handleRewardEntryCompleteButton(buttonName, screenTag, eve
  */
 export async function handleEntryCompleteButton(buttonName, screenTag, eventObj, devInterface) {
   try {
-    const { FormGetField, executeSQL, executeSQLPromise, getUserName, refreshData } = devInterface;
-    
+    const { FormGetField, executeSQL, executeSQLPromise, getUserName, refreshData, doToolbarAction } = devInterface;
+
     // Check if required functions are available
     if (!FormGetField || (!executeSQL && !executeSQLPromise) || !getUserName || !refreshData) {
       console.error('[Web_HSE] Missing required devInterface functions for Entry Complete button');
       toast.error('System error: Required functions not available');
       return;
     }
-    
+
     // Prefer executeSQLPromise for async operations, fallback to executeSQL
     const executeSQLAsync = executeSQLPromise || executeSQL;
+
+    // GAP R1: C++ save-then-act parity with Confirm/Close (NearMissEntryCategory — persist before completeNearMissTXN)
+    const entryFormTag = screenTag || 'HSE_TgNrstMiscEnt';
+    if (typeof doToolbarAction === 'function') {
+      doToolbarAction('SAVE', entryFormTag, '');
+    } else {
+      console.warn(
+        '[Web_HSE] Observation Entry Complete: doToolbarAction missing — Web_HSE should wire SAVE for full desktop parity (GAP R7)'
+      );
+    }
 
     // Extract event data
     // C++: CString strSubFormTag(pCustomButtonClicked->SubForm_Tag);
@@ -852,20 +956,20 @@ export async function handleEntryCompleteButton(buttonName, screenTag, eventObj,
       // Fallback: try to get from form field
       // Try multiple form tags as fallback (view name is more reliable)
       try {
-        observationId = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM') || '';
+        observationId = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM', 'SCR') || '';
       } catch (e) {
         // Ignore error, try next option
       }
       if (!observationId) {
         try {
-          observationId = FormGetField('HSE_TgNrstMiscEnt', 'NRSTMISCENT_NRSTMISCNUM') || '';
+          observationId = FormGetField('HSE_TgNrstMiscEnt', 'NRSTMISCENT_NRSTMISCNUM', 'SCR') || '';
         } catch (e) {
           // Ignore error, try next option
         }
       }
       if (!observationId && screenTag) {
         try {
-          observationId = FormGetField(screenTag, 'NRSTMISCENT_NRSTMISCNUM') || '';
+          observationId = FormGetField(screenTag, 'NRSTMISCENT_NRSTMISCNUM', 'SCR') || '';
         } catch (e) {
           // Ignore error
         }
@@ -887,20 +991,20 @@ export async function handleEntryCompleteButton(buttonName, screenTag, eventObj,
     // Try multiple form tags to get description (view name is more reliable)
     let description = '';
     try {
-      description = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCDESC') || '';
+      description = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCDESC', 'SCR') || '';
     } catch (e) {
       // Ignore error, try next option
     }
     if (!description) {
       try {
-        description = FormGetField('HSE_TgNrstMiscEnt', 'NRSTMISCENT_NRSTMISCDESC') || '';
+        description = FormGetField('HSE_TgNrstMiscEnt', 'NRSTMISCENT_NRSTMISCDESC', 'SCR') || '';
       } catch (e) {
         // Ignore error, try next option
       }
     }
     if (!description && screenTag) {
       try {
-        description = FormGetField(screenTag, 'NRSTMISCENT_NRSTMISCDESC') || '';
+        description = FormGetField(screenTag, 'NRSTMISCENT_NRSTMISCDESC', 'SCR') || '';
       } catch (e) {
         // Ignore error - description update is optional
       }
@@ -974,14 +1078,37 @@ export async function handleEntryCompleteButton(buttonName, screenTag, eventObj,
   }
 }
 
+/** RQ_HSE_12_4_26_00_40 — GAP-6: backoff between PrmKy lookup attempts after INSERT */
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * RQ_HSE_12_4_26_00_40 — GAP-6: surface image-copy / PrmKy issues to operators (toast + optional modal)
+ * @param {{ AskYesNoMessage?: (msg: string) => void }} [notify]
+ */
+function notifyObservationCarImageGap6(notify, message) {
+  const full = `${message} You may attach images manually on the CAR. (RQ_HSE_12_4_26_00_40 GAP-6)`;
+  toast.error(full);
+  const fn = notify?.AskYesNoMessage;
+  if (typeof fn === 'function') {
+    try {
+      fn(full);
+    } catch (_) {
+      /* non-blocking */
+    }
+  }
+}
+
 /**
  * RQ_HSE_13_3_26_1_43: Auto-generate a CAR record from a closed observation when Require CAR = Y.
  * C++ ref: NearMissFollowUpCategory::DisplayCustomButtonClicked (lines 69-205)
  * Reads observation form fields, queries policy, inserts into HSE_CRENTRY, copies images, shows toast.
+ * @param {{ AskYesNoMessage?: (msg: string) => void }} [notify] RQ_HSE_12_4_26_00_40 — GAP-6
  */
-async function generateCARFromObservation(formTag, obsKeyFieldValue, executeSQLAsync, FormGetField, userName) {
+async function generateCARFromObservation(formTag, obsKeyFieldValue, executeSQLAsync, FormGetField, userName, notify = {}) {
   const readField = (field) => {
-    try { return (FormGetField(formTag, field) || FormGetField('HSE_vwNRSTMISCENT', field) || '').toString().trim(); }
+    try { return (FormGetField(formTag, field, 'SCR') || FormGetField('HSE_vwNRSTMISCENT', field, 'SCR') || '').toString().trim(); }
     catch (_) { return ''; }
   };
   const esc = (v) => (v == null ? '' : String(v).replace(/'/g, "''"));
@@ -993,11 +1120,6 @@ async function generateCARFromObservation(formTag, obsKeyFieldValue, executeSQLA
   const now = new Date();
   const strCARDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const strCARYear = String(now.getFullYear());
-
-  // Next CAR number for this year
-  const carNumRs = await executeSQLAsync(`SELECT ISNULL(MAX(CRENTRY_CRN)+1, 1) AS NewCARNo FROM HSE_CRENTRY WHERE CRENTRY_CRYR='${esc(strCARYear)}'`);
-  const carNumRow = carNumRs?.recordset?.[0] ?? carNumRs?.[0];
-  const strCARNo = String(carNumRow?.NewCARNo ?? carNumRow?.newcarno ?? 1);
 
   // Policy fields
   let CARStatus = '';
@@ -1021,12 +1143,24 @@ async function generateCARFromObservation(formTag, obsKeyFieldValue, executeSQLA
   } catch (_) {}
 
   // Employee (login user employee code – already resolved earlier in handleCloseButton's caller)
+  // RQ_HSE_12_4_26_00_40 — align login columns with CAR_Entry / getEmployeeCodeForLoginUser (USRID, LOGINNAME, USERID)
   let strEmployee = '';
-  try {
-    const empRs = await executeSQLAsync(`SELECT EMPLOYEE_NO FROM CMN_EMPLOYEE WHERE EMPLOYEE_USERID = '${esc(userName)}'`);
-    const empRow = empRs?.recordset?.[0] ?? empRs?.[0];
-    strEmployee = (empRow?.EMPLOYEE_NO ?? empRow?.employee_no ?? '').toString().trim();
-  } catch (_) {}
+  const escLogin = esc(userName);
+  for (const col of ['EMPLOYEE_USRID', 'EMPLOYEE_LOGINNAME', 'EMPLOYEE_USERID']) {
+    try {
+      const empRs = await executeSQLAsync(
+        `SELECT TOP 1 EMPLOYEE_NO FROM CMN_EMPLOYEE WHERE ${col} = '${escLogin}'`
+      );
+      const empRow = empRs?.recordset?.[0] ?? empRs?.[0];
+      const no = (empRow?.EMPLOYEE_NO ?? empRow?.employee_no ?? '').toString().trim();
+      if (no) {
+        strEmployee = no;
+        break;
+      }
+    } catch (_) {
+      /* try next column */
+    }
+  }
 
   // Observation fields
   const strNCDescription = readField('NRSTMISCENT_NRSTMISCDESC');
@@ -1039,44 +1173,94 @@ async function generateCARFromObservation(formTag, obsKeyFieldValue, executeSQLA
   const strTXNYear = readField('NRSTMISCENT_YR');
   const strTXNNo = readField('NRSTMISCENT_NO');
 
-  // CAR Serial No. based on year + source
-  let strCARSerialNo = '1';
-  try {
-    const srlRs = await executeSQLAsync(`SELECT ISNULL(MAX(CRENTRY_CRSRLN)+1, 1) AS SRL FROM HSE_CRENTRY WHERE CRENTRY_CRYR='${esc(strCARYear)}' AND CRENTRY_CRSRC='${esc(strCARSource)}'`);
-    const srlRow = srlRs?.recordset?.[0] ?? srlRs?.[0];
-    strCARSerialNo = String(srlRow?.SRL ?? srlRow?.srl ?? 1);
-  } catch (_) {}
+  // RQ_HSE_12_4_26_00_40 — GAP-5: ##TEMP_HSE_TABLE + INSERT in one batch per attempt (not separate round-trips)
 
-  // C++: temp table for trigger-based tracing during INSERT
-  try {
-    await executeSQLAsync(`IF OBJECT_ID('tempdb..##TEMP_HSE_TABLE') IS NULL CREATE TABLE ##TEMP_HSE_TABLE(KEYrec VARCHAR(50) NOT NULL, VALUErec VARCHAR(50), CONSTRAINT PK_TEMP_HSE_TABLE PRIMARY KEY CLUSTERED (KEYrec))`);
-    await executeSQLAsync(`DELETE FROM ##TEMP_HSE_TABLE`);
-    await executeSQLAsync(`INSERT INTO ##TEMP_HSE_TABLE(KEYrec, VALUErec) VALUES('ActionDescription','Creating new CAR')`);
-    await executeSQLAsync(`INSERT INTO ##TEMP_HSE_TABLE(KEYrec, VALUErec) VALUES('SrcScreen','Observation Approval')`);
-    await executeSQLAsync(`INSERT INTO ##TEMP_HSE_TABLE(KEYrec, VALUErec) VALUES('UserID','${esc(userName)}')`);
-  } catch (tmpErr) {
-    console.warn('[Web_HSE] CAR generation temp table setup:', tmpErr);
-  }
-
-  // INSERT INTO HSE_CRENTRY
   const cols = `CRENTRY_CRDT,CRENTRY_CRYR,CRENTRY_CRN,CRENTRY_CRSTT,CRENTRY_DPR,CRENTRY_NM,CRENTRY_NCDSC,CRENTRY_EVD,CRENTRY_CRPRR,CRENTRY_ST,CRENTRY_LCT,CRENTRY_AR,CRENTRY_CNCDPR,CRENTRY_ATGNR,CRENTRY_CRSRC,CRENTRY_CRSRLN,CRENTRY_TXNYR,CRENTRY_TXNN${strProject ? ',CRENTRY_PRJ' : ''}`;
-  const vals = `'${esc(strCARDate)}','${esc(strCARYear)}','${esc(strCARNo)}','${esc(CARStatus)}','${esc(strOwnerDept)}','${esc(strEmployee)}','${esc(strNCDescription)}','${esc(strEvidence)}','m','${esc(strSite)}','${esc(strLocation)}','${esc(strArea)}','${esc(strConcernedDepartment)}','Y','${esc(strCARSource)}','${esc(strCARSerialNo)}','${esc(strTXNYear)}','${esc(strTXNNo)}'${strProject ? `,'${esc(strProject)}'` : ''}`;
-  await executeSQLAsync(`INSERT INTO HSE_CRENTRY (${cols}) VALUES (${vals})`);
 
-  // Copy images from observation to CAR
-  try {
-    const strPicture = readField('NRSTMISCENT_NRSTMISCNUM') || obsKeyFieldValue;
-    const prmRs = await executeSQLAsync(`SELECT PrmKy FROM HSE_CRENTRY WHERE CRENTRY_CRDT='${esc(strCARDate)}' AND CRENTRY_CRYR='${esc(strCARYear)}' AND CRENTRY_CRN='${esc(strCARNo)}'`);
-    const prmRow = prmRs?.recordset?.[0] ?? prmRs?.[0];
-    const strPrmKy = (prmRow?.PrmKy ?? prmRow?.prmky ?? prmRow?.PRMKY ?? '').toString();
-    if (strPrmKy) {
-      await executeSQLAsync(`EXEC CopyImages 'HSEMS','HSE_VWNRSTMISCENT','NRSTMISCENT_NRSTMISCNUM','${esc(strPicture)}','NRSTMISCENT_OBSRVTNIMG','HSE_CRENTRY','PrmKy','${esc(strPrmKy)}','CRENTRY_NCPHT'`);
+  /** RQ_HSE_12_4_26_00_40 — allocation + INSERT are separate HTTP calls; retry on duplicate (year, CRN) / unique violations */
+  const isDupKeyErr = (e) => {
+    const m = String(e?.message ?? e ?? '').toLowerCase();
+    return (
+      m.includes('2627') ||
+      m.includes('2601') ||
+      m.includes('duplicate') ||
+      m.includes('unique constraint')
+    );
+  };
+
+  let strCARNo = '1';
+  let insertErr = null;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    strCARNo = await getNextAllocatedCrentryCrn(executeSQLAsync, strCARYear, undefined);
+    const strCARSerialNo = await getNextAllocatedCrentryCrsrln(
+      executeSQLAsync,
+      strCARYear,
+      strCARSource,
+      undefined
+    );
+    const vals = `'${esc(strCARDate)}','${esc(strCARYear)}','${esc(strCARNo)}','${esc(CARStatus)}','${esc(strOwnerDept)}','${esc(strEmployee)}','${esc(strNCDescription)}','${esc(strEvidence)}','m','${esc(strSite)}','${esc(strLocation)}','${esc(strArea)}','${esc(strConcernedDepartment)}','Y','${esc(strCARSource)}','${esc(strCARSerialNo)}','${esc(strTXNYear)}','${esc(strTXNNo)}'${strProject ? `,'${esc(strProject)}'` : ''}`;
+    try {
+      const ctxBatch = buildCrentryTriggerContextBatchSql(userName, 'Observation Approval', 'Creating new CAR');
+      await executeSQLAsync(`${ctxBatch}INSERT INTO HSE_CRENTRY (${cols}) VALUES (${vals})`);
+      insertErr = null;
+      break;
+    } catch (e) {
+      insertErr = e;
+      if (!isDupKeyErr(e)) {
+        console.error('[Web_HSE] RQ_HSE_12_4_26_00_40 generateCARFromObservation INSERT:', e);
+        throw e;
+      }
     }
-  } catch (imgErr) {
-    console.warn('[Web_HSE] CopyImages:', imgErr);
+  }
+  if (insertErr) {
+    console.error('[Web_HSE] RQ_HSE_12_4_26_00_40 CAR INSERT exhausted retries', insertErr);
+    throw insertErr;
   }
 
   toast.success(`CAR is generated with CAR No. = ${strCARYear}-${strCARNo}`);
+
+  // RQ_HSE_12_4_26_00_40 — GAP-6: PrmKy SELECT retries (pool/replication lag); then CopyImages with prominent failure notice
+  const strPicture = readField('NRSTMISCENT_NRSTMISCNUM') || obsKeyFieldValue;
+  const prmKySql = `SELECT PrmKy FROM HSE_CRENTRY WHERE CRENTRY_CRDT='${esc(strCARDate)}' AND CRENTRY_CRYR='${esc(strCARYear)}' AND CRENTRY_CRN='${esc(strCARNo)}'`;
+  const prmKyDelaysMs = [0, 200, 500];
+  let strPrmKy = '';
+  let lastPrmKyErr = null;
+  for (let attempt = 0; attempt < prmKyDelaysMs.length; attempt++) {
+    if (prmKyDelaysMs[attempt] > 0) {
+      await sleepMs(prmKyDelaysMs[attempt]);
+    }
+    try {
+      const prmRs = await executeSQLAsync(prmKySql);
+      const prmRow = prmRs?.recordset?.[0] ?? prmRs?.[0];
+      const pk = (prmRow?.PrmKy ?? prmRow?.prmky ?? prmRow?.PRMKY ?? '').toString().trim();
+      if (pk) {
+        strPrmKy = pk;
+        break;
+      }
+    } catch (selErr) {
+      lastPrmKyErr = selErr;
+      console.error('[Web_HSE] RQ_HSE_12_4_26_00_40 GAP-6 PrmKy SELECT after observation CAR INSERT:', selErr);
+    }
+  }
+
+  if (!strPrmKy) {
+    const detail = lastPrmKyErr
+      ? `CAR was created but the new record key could not be read after retries (${lastPrmKyErr?.message || String(lastPrmKyErr)}). Observation photos were not copied.`
+      : 'CAR was created but its primary key was not found for image copy (empty result after retries).';
+    notifyObservationCarImageGap6(notify, detail);
+  } else {
+    try {
+      await executeSQLAsync(
+        `EXEC CopyImages 'HSEMS','HSE_VWNRSTMISCENT','NRSTMISCENT_NRSTMISCNUM','${esc(strPicture)}','NRSTMISCENT_OBSRVTNIMG','HSE_CRENTRY','PrmKy','${esc(strPrmKy)}','CRENTRY_NCPHT'`
+      );
+    } catch (imgErr) {
+      console.error('[Web_HSE] RQ_HSE_12_4_26_00_40 GAP-6 CopyImages after observation CAR:', imgErr);
+      notifyObservationCarImageGap6(
+        notify,
+        `CopyImages failed for CAR ${strCARYear}-${strCARNo}: ${imgErr?.message || String(imgErr)}`
+      );
+    }
+  }
 }
 
 /**
@@ -1101,6 +1285,7 @@ export async function handleCloseButton(buttonName, screenTag, eventObj, devInte
       refreshData,
       doToolbarAction,
       getEmployeeCodeForLoginUser,
+      AskYesNoMessage,
     } = devInterface;
 
     if (
@@ -1137,13 +1322,13 @@ export async function handleCloseButton(buttonName, screenTag, eventObj, devInte
 
     if (!keyFieldValue) {
       try {
-        keyFieldValue = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM') || '';
+        keyFieldValue = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM', 'SCR') || '';
       } catch (e) {
         // ignore
       }
       if (!keyFieldValue) {
         try {
-          keyFieldValue = FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM') || '';
+          keyFieldValue = FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM', 'SCR') || '';
         } catch (e) {
           // ignore
         }
@@ -1157,14 +1342,21 @@ export async function handleCloseButton(buttonName, screenTag, eventObj, devInte
       return;
     }
 
-    // BUG_HSE_HSM_14_3_26: C++ strEmployeeName = GetEmployeeCodeForLoginUser(); if empty, only RefreshScreen
-    if (typeof getEmployeeCodeForLoginUser === 'function') {
-      const employeeCode = await getEmployeeCodeForLoginUser();
-      const emp = employeeCode != null && String(employeeCode).trim() !== '' ? String(employeeCode).trim() : '';
-      if (emp === '') {
-        refreshData('', 'REFRESH_SELECTED');
-        return;
-      }
+    // GAP R4: C++ requires resolved employee for close; fail loudly instead of silent refresh-only path
+    if (typeof getEmployeeCodeForLoginUser !== 'function') {
+      toast.error(
+        'Employee lookup is not available for this session. Observation cannot be closed until the host wires getEmployeeCodeForLoginUser.'
+      );
+      return;
+    }
+    const employeeCode = await getEmployeeCodeForLoginUser();
+    const emp = employeeCode != null && String(employeeCode).trim() !== '' ? String(employeeCode).trim() : '';
+    if (emp === '') {
+      toast.error(
+        'Your login is not linked to an employee record. Close cannot proceed. Contact HR or system support.'
+      );
+      refreshData('', 'REFRESH_SELECTED');
+      return;
     }
 
     // BUG_HSE_HSM_14_3_26: C++ strSourceScreenName = GetScrCptnByTag(66, strFormTag, "") – use caption for tracing
@@ -1190,7 +1382,9 @@ export async function handleCloseButton(buttonName, screenTag, eventObj, devInte
       // RQ_HSE_13_3_26_1_43: C++ CAR auto-generation – client-side INSERT after closeNearMissTXN
       // C++ ref: NearMissFollowUpCategory.cpp lines 69-205
       try {
-        await generateCARFromObservation(formTag, keyFieldValue, executeSQLAsync, FormGetField, userName);
+        await generateCARFromObservation(formTag, keyFieldValue, executeSQLAsync, FormGetField, userName, {
+          AskYesNoMessage,
+        });
       } catch (carErr) {
         console.error('[Web_HSE] Error in CAR auto-generation (observation still closed):', carErr);
       }

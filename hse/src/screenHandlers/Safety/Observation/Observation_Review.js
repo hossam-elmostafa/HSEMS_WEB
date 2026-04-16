@@ -2,6 +2,7 @@
  * Screen handler: Observation Review (HSE_TgNrstMisccnfrmtn)
  * Menu path: Safety -> Observation -> Observation Review (from HSE.json)
  * Delegates custom buttons to ObservationService and runs observation tab logic for toolbar events.
+ * RQ_HSE_5_4_26_14_19 — Comments tab Source Screen = getScreenCaption.
  */
 
 import {
@@ -9,6 +10,8 @@ import {
   isObservationTabsEnabled,
   manageObservationTabs,
   manageCommentsTabToolBar,
+  // RQ_HSE_5_4_26_14_19
+  applyObservationCommentsSourceScreen,
 } from '../../../services/Observation service/ObservationService.js';
 import { mapUnknownFieldTypes } from '../../../utils/fieldTypeMapper.js';
 import { setNextSerialOnNewTab } from '../../../utils/tabNewSerialUtils.js';
@@ -67,6 +70,24 @@ export async function toolBarButtonClicked(eventObj, callBackFn) {
   const strTabTag = (eventObj.strTabTag && eventObj.strTabTag.toString().toUpperCase()) || '';
   const strBtnName = (eventObj.strBtnName && eventObj.strBtnName.toString().toUpperCase()) || '';
   const complete = eventObj.complete;
+  const completeStr = complete == null ? '' : String(complete).trim();
+  const isPostPhase = complete === 1 || completeStr === '1';
+  const isPrePhase =
+    !isPostPhase &&
+    (complete == null ||
+      complete === '' ||
+      complete === 0 ||
+      complete === false ||
+      completeStr === '0');
+
+  // RQ_HSE_5_4_26_14_19
+  try {
+    if (strBtnName === 'SAVE' && isPrePhase && strTabTag && strTabTag.includes('CMNTS') && eventObj.isNewMode) {
+      applyObservationCommentsSourceScreen(devInterface, strScrTag, strTabTag, eventObj?.fullRecord);
+    }
+  } catch (e) {
+    console.warn('[Web_HSE] Observation Review SAVE pre Comments SRCSCRN:', e);
+  }
 
   try {
     if (strBtnName === 'NEW' && complete === 1 && strTabTag) {
@@ -100,6 +121,7 @@ export async function toolBarButtonClicked(eventObj, callBackFn) {
 
   // Re-apply serial after callback (the callback may trigger state resets that overwrite the field).
   // This mirrors the desktop C++ behaviour where getNxtSrl + FormSetField occurs after the framework has finished setting up the new row.
+  // RQ_HSE_5_4_26_14_19 — re-apply Comments SRCSCRN after NEW on CMNTS when client resets defaults
   try {
     if (strBtnName === 'NEW' && complete === 1 && strTabTag) {
       const config = TAB_NEW_SERIAL_CONFIG[strTabTag];
@@ -119,6 +141,9 @@ export async function toolBarButtonClicked(eventObj, callBackFn) {
         const n = parseInt(val, 10);
         const newSerial = Number.isFinite(n) && n > 0 ? n : 1;
         devInterface.FormSetField(config.tabTable, config.serialField, String(newSerial), 'tab');
+      }
+      if (strTabTag.includes('CMNTS')) {
+        applyObservationCommentsSourceScreen(devInterface, strScrTag, strTabTag, undefined);
       }
     }
   } catch (e) {

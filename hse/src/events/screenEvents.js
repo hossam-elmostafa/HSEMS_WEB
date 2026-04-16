@@ -82,10 +82,10 @@ export function MainSubReposition(strFormTag, Main_Position, Seleted_Tab, strSel
       const { FormGetField } = devInterfaceObj;
       if (FormGetField) {
         // Try to get the observation number to verify link field
-        const obsNum = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM') ||
-                      FormGetField('HSE_vwNRSTMISCENT', 'NrstMiscEnt_NrstMiscNum') ||
-                      FormGetField(strFormTag, 'NRSTMISCENT_NRSTMISCNUM') ||
-                      FormGetField(strFormTag, 'NrstMiscEnt_NrstMiscNum') ||
+        const obsNum = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM', 'SCR') ||
+                      FormGetField('HSE_vwNRSTMISCENT', 'NrstMiscEnt_NrstMiscNum', 'SCR') ||
+                      FormGetField(strFormTag, 'NRSTMISCENT_NRSTMISCNUM', 'SCR') ||
+                      FormGetField(strFormTag, 'NrstMiscEnt_NrstMiscNum', 'SCR') ||
                       '';
         console.log('[Web_HSE] Tracing tab accessed:', {
           formTag: strFormTag,

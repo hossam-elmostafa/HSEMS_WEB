@@ -173,8 +173,17 @@ import * as HSE_TgActnsEntry from './Performance/Action Tracking/Actions_Entry.j
 import * as HSE_TgActnsRviw from './Performance/Action Tracking/Actions_Review.js';
 import * as HSE_TgActnsRcvd from './Performance/Action Tracking/Actions_Received.js';
 import * as HSE_TgActnsUndrExec from './Performance/Action Tracking/Actions_Under_Execution.js';
+import * as HSE_TgcrctveAccEnt from './Performance/Action Tracking/Creative_Access_Entry.js'; // RQ_HSE_30_3_26_14_57
 import * as HSE_TgCrFloUp from './Performance/Action Tracking/CAR_Follow_Up.js';
 import * as HSE_TgCrEdtng from './Performance/Action Tracking/CAR_Editing.js';
+// RQ_HSE_12_4_26_00_40 — GAP-2: Layer 2 screens (Confirmation, Job Verification, Follow-Up Visit)
+import * as HSE_TgCrctveAccCnfrmtn from './Performance/Action Tracking/CAR_Confirmation.js';
+import * as HSE_TgCrctveAccJobVrfctn from './Performance/Action Tracking/CAR_Job_Verification.js';
+import * as HSE_TgCARFlwUpVsts from './Performance/Action Tracking/CAR_Follow_Up_Visit.js';
+// RQ_HSE_12_4_26_00_40 — GAP-3: Action Tracking Corrective Action Inquiry
+import * as HSE_TgCrctveAccInqAT from './Performance/Action Tracking/Corrective_Action_Inquiry.js';
+// RQ_HSE_12_4_26_00_40 — GAP-1/12: Corrective Actions Popup screen handler
+import * as HSE_CrrctvActnsPopup from './Performance/Action Tracking/Corrective_Actions_Popup.js';
 import * as HSE_TgrskassmntInq from './Inquiry screens/Risk_Assessment_Inquiry.js';
 import * as HSE_TgperfMsrmntInq from './Inquiry screens/Performance_Measurement_Inquiry.js';
 import * as HSE_TgSitSrvyInq from './Inquiry screens/Site_Survey_Inquiry.js';
@@ -362,8 +371,20 @@ const SCREEN_HANDLERS = {
   'HSE_TgActnsRviw': HSE_TgActnsRviw,
   'HSE_TgActnsRcvd': HSE_TgActnsRcvd,
   'HSE_TgActnsUndrExec': HSE_TgActnsUndrExec,
+  'HSE_TgcrctveAccEnt': HSE_TgcrctveAccEnt, // RQ_HSE_30_3_26_14_57 — completeCARTXN (CAREntryCategory)
   'HSE_TgCrFloUp': HSE_TgCrFloUp,
   'HSE_TgCrEdtng': HSE_TgCrEdtng,
+  // RQ_HSE_12_4_26_00_40 — GAP-2: Layer 2 Confirmation / Job Verification / Follow-Up Visit
+  'HSE_TgCrctveAccCnfrmtn': HSE_TgCrctveAccCnfrmtn,
+  'HSE_TgCrctveAccJobVrfctn': HSE_TgCrctveAccJobVrfctn,
+  'HSE_TgCARFlwUpVsts': HSE_TgCARFlwUpVsts,
+  // RQ_HSE_12_4_26_00_40 — GAP-3: Action Tracking Corrective Action Inquiry
+  'HSE_TgCrctveAccInq_AT': HSE_TgCrctveAccInqAT,
+  // RQ_HSE_12_4_26_00_40 — GAP-1/12: Corrective Actions Popup (all popup tag variants)
+  'HSE_TGCRRCTVACTNS': HSE_CrrctvActnsPopup,
+  'HSE_TgCrrctvActns_Rvw': HSE_CrrctvActnsPopup,
+  'HSE_TgCrrctvActns_ActEnt': HSE_CrrctvActnsPopup,
+  'HSE_TgCrrctvActnsFlwUp': HSE_CrrctvActnsPopup,
   'HSE_TgrskassmntInq': HSE_TgrskassmntInq,
   'HSE_TgperfMsrmntInq': HSE_TgperfMsrmntInq,
   'HSE_TgSitSrvyInq': HSE_TgSitSrvyInq,

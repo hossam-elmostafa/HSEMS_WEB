@@ -42,7 +42,7 @@ export default function useHSE(useDevInterfaceFun) {
     refreshData,
     ChangeCriteria,
     getCurrentFormatedDate,
-    setScreenDisableBtn,    
+    setScreenDisableBtn,
     downloadReportFile,
     doToolbarAction,
     updateScrRow,
@@ -58,7 +58,11 @@ export default function useHSE(useDevInterfaceFun) {
     TabEnable,
     openAdvancedFilter,
     changeCustomButtonProperty,
-    isAdminUser
+    isAdminUser,
+    aiRephrasePromise, // RQ_HSE_25_3_26_10_00
+    aiTranslatePromise, // RQ_HSE_25_3_26_10_30
+    getApiBaseUrl,
+    getAccessToken,
   } = useDevInterfaceFun();
 
   let devInterfaceObj = {};
@@ -100,11 +104,17 @@ export default function useHSE(useDevInterfaceFun) {
   devInterfaceObj.getAppPolicy = (policyFldName, callBackFn) => getAppPolicy(executeSQLPromise, getValFromRecordSet, policyFldName, callBackFn);
   devInterfaceObj.getAppPolicyV2 = (policyFldName) => getAppPolicyV2(executeSQL, getValFromRecordSet, policyFldName);
   devInterfaceObj.getMessage = (key, paramArr = []) => getMessage(getCurrentLang, key, paramArr);
-  devInterfaceObj.runToolsForWebFn = runToolsForWebFn;  
+  devInterfaceObj.runToolsForWebFn = runToolsForWebFn;
   devInterfaceObj.AskYesNoMessage = AskYesNoMessage;
   devInterfaceObj.TabEnable = TabEnable;
   devInterfaceObj.openAdvancedFilter = openAdvancedFilter;
   devInterfaceObj.changeCustomButtonProperty = changeCustomButtonProperty;
+  // RQ_HSE_25_3_26_10_00 — AI rephrase from HSE handlers — must be on devInterfaceObj (screenEvents passes this object, not raw useDevInterfaceFun).
+  devInterfaceObj.aiRephrasePromise = aiRephrasePromise;
+  // RQ_HSE_25_3_26_10_30 — AI translate from HSE handlers — must be on devInterfaceObj (screenEvents passes this object, not raw useDevInterfaceFun).
+  devInterfaceObj.aiTranslatePromise = aiTranslatePromise;
+  devInterfaceObj.getApiBaseUrl = getApiBaseUrl;
+  devInterfaceObj.getAccessToken = getAccessToken;
   // RQ_HSE_23_3_26_22_02: Aspects Register admin / department scoping (C++ IsAdminUser)
   devInterfaceObj.isAdminUser =
     typeof isAdminUser === 'function'
@@ -119,7 +129,9 @@ export default function useHSE(useDevInterfaceFun) {
 
   // Set devInterface for ButtonClicked handler
   setDevInterface(devInterfaceObj);
-  
+  // RQ_HSE_12_4_26_00_40 — GAP-3: browseEvents falls back to global; keep in sync with setDevInterface for hosts that do not pass brwsObj._devInterfaceObj
+  if (typeof globalThis !== 'undefined') globalThis.__hseDevInterface = devInterfaceObj;
+
   // Set devInterface for screen event handlers (MainSubReposition, etc.)
   setScreenDevInterface(devInterfaceObj);
 
@@ -135,6 +147,6 @@ export default function useHSE(useDevInterfaceFun) {
     beforeRenderAppMenu,
     beforeRenderCustomActions,
     onMenuItemClicked,
-    onAppOpen
-  }
+    onAppOpen,
+  };
 }
