@@ -32,6 +32,21 @@ export function SubFieldChanged(strScrTag, strTabTag, fieldName, oldFieldVal, fi
       cancel : 0
     }
     try {
+      const screenHandler = getScreenHandler(strScrTag);
+      if (screenHandler && typeof screenHandler.SubFieldChanged === 'function') {
+        const handlerResult = await screenHandler.SubFieldChanged(
+          strScrTag,
+          strTabTag,
+          fieldName,
+          oldFieldVal,
+          fieldVal,
+          updatedAppGlobalVal,
+          devInterfaceObj
+        );
+        if (handlerResult && handlerResult.cancel) {
+          retObj.cancel = handlerResult.cancel;
+        }
+      }
       resolve(retObj);
     } catch (error) {
       console.error('Error in SubFieldChanged:', error);
