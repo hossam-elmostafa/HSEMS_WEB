@@ -1,7 +1,8 @@
 /***********************************************************/
-/*
 /*  HSE Client Side Code
-/*
+ *  RQ_HSE_23_3_26_22_02: Aspects Register parity — isAdminUser, ChangeCriteria (WebInfra),
+ *  FormEnableButton tab toolbar, setScrLockedAttrb, C×L risk rank (WebInfra + aspectsRegisterPolicy).
+ */
 /***********************************************************/
 import { toast } from "react-toastify";
 
@@ -14,6 +15,8 @@ import { beforeRenderAppMenu, beforeRenderCustomActions, onMenuItemClicked, onAp
 // Import utilities
 import { getMessage } from './src/utils/messageUtils';
 import { getAppPolicy, getAppPolicyV2 } from './src/utils/policyUtils';
+// BUG_HSE_HSM_14_3_26: desktop GetEmployeeCodeForLoginUser – employee code for current login
+import { getEmployeeCodeForLoginUser as getEmployeeCodeForLoginUserImpl } from './src/utils/getEmployeeCodeForLoginUser';
 
 export default function useHSE(useDevInterfaceFun) {
   const {
@@ -37,8 +40,9 @@ export default function useHSE(useDevInterfaceFun) {
     getScrNxtSegment,
     getScrNxtSegmentPromise,
     refreshData,
+    ChangeCriteria,
     getCurrentFormatedDate,
-    setScreenDisableBtn,    
+    setScreenDisableBtn,
     downloadReportFile,
     doToolbarAction,
     updateScrRow,
@@ -53,7 +57,12 @@ export default function useHSE(useDevInterfaceFun) {
     AskYesNoMessage,
     TabEnable,
     openAdvancedFilter,
-    changeCustomButtonProperty
+    changeCustomButtonProperty,
+    isAdminUser,
+    aiRephrasePromise, // RQ_HSE_25_3_26_10_00
+    aiTranslatePromise, // RQ_HSE_25_3_26_10_30
+    getApiBaseUrl,
+    getAccessToken,
   } = useDevInterfaceFun();
 
   let devInterfaceObj = {};
@@ -79,6 +88,7 @@ export default function useHSE(useDevInterfaceFun) {
   devInterfaceObj.getScrNxtSegment = getScrNxtSegment;
   devInterfaceObj.getScrNxtSegmentPromise = getScrNxtSegmentPromise;
   devInterfaceObj.refreshData = refreshData;
+  devInterfaceObj.ChangeCriteria = ChangeCriteria;
   devInterfaceObj.getCurrentFormatedDate = getCurrentFormatedDate;
   devInterfaceObj.setScreenDisableBtn = setScreenDisableBtn;
   devInterfaceObj.downloadReportFile = downloadReportFile;
@@ -94,15 +104,34 @@ export default function useHSE(useDevInterfaceFun) {
   devInterfaceObj.getAppPolicy = (policyFldName, callBackFn) => getAppPolicy(executeSQLPromise, getValFromRecordSet, policyFldName, callBackFn);
   devInterfaceObj.getAppPolicyV2 = (policyFldName) => getAppPolicyV2(executeSQL, getValFromRecordSet, policyFldName);
   devInterfaceObj.getMessage = (key, paramArr = []) => getMessage(getCurrentLang, key, paramArr);
-  devInterfaceObj.runToolsForWebFn = runToolsForWebFn;  
+  devInterfaceObj.runToolsForWebFn = runToolsForWebFn;
   devInterfaceObj.AskYesNoMessage = AskYesNoMessage;
   devInterfaceObj.TabEnable = TabEnable;
   devInterfaceObj.openAdvancedFilter = openAdvancedFilter;
   devInterfaceObj.changeCustomButtonProperty = changeCustomButtonProperty;
+  // RQ_HSE_25_3_26_10_00 — AI rephrase from HSE handlers — must be on devInterfaceObj (screenEvents passes this object, not raw useDevInterfaceFun).
+  devInterfaceObj.aiRephrasePromise = aiRephrasePromise;
+  // RQ_HSE_25_3_26_10_30 — AI translate from HSE handlers — must be on devInterfaceObj (screenEvents passes this object, not raw useDevInterfaceFun).
+  devInterfaceObj.aiTranslatePromise = aiTranslatePromise;
+  devInterfaceObj.getApiBaseUrl = getApiBaseUrl;
+  devInterfaceObj.getAccessToken = getAccessToken;
+  // RQ_HSE_23_3_26_22_02: Aspects Register admin / department scoping (C++ IsAdminUser)
+  devInterfaceObj.isAdminUser =
+    typeof isAdminUser === 'function'
+      ? isAdminUser
+      : () => {
+          const u = getCurrentUserObj?.();
+          const t = (u?.Set_AS_Administrator ?? '').toString();
+          return t.toUpperCase().includes('ADMINISTRATOR');
+        };
+  // BUG_HSE_HSM_14_3_26: expose getEmployeeCodeForLoginUser for Observation Approval Close and other flows
+  devInterfaceObj.getEmployeeCodeForLoginUser = () => getEmployeeCodeForLoginUserImpl(devInterfaceObj);
 
   // Set devInterface for ButtonClicked handler
   setDevInterface(devInterfaceObj);
-  
+  // RQ_HSE_12_4_26_00_40 — GAP-3: browseEvents falls back to global; keep in sync with setDevInterface for hosts that do not pass brwsObj._devInterfaceObj
+  if (typeof globalThis !== 'undefined') globalThis.__hseDevInterface = devInterfaceObj;
+
   // Set devInterface for screen event handlers (MainSubReposition, etc.)
   setScreenDevInterface(devInterfaceObj);
 
@@ -118,6 +147,6 @@ export default function useHSE(useDevInterfaceFun) {
     beforeRenderAppMenu,
     beforeRenderCustomActions,
     onMenuItemClicked,
-    onAppOpen
-  }
+    onAppOpen,
+  };
 }

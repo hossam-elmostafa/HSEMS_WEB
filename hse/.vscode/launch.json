@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "chrome",
+      "request": "launch",
+      "name": "Debug client app (Chrome)",
+      "url": "http://localhost:3000",
+      "webRoot": "${workspaceFolder}/../../Webinfra.Client",
+      "sourceMapPathOverrides": {
+        "webpack:///./node_modules/hse/*": "${workspaceFolder}/*",
+        "webpack:///node_modules/hse/*": "${workspaceFolder}/*",
+        "webpack:///hse/*": "${workspaceFolder}/*"
+      }
+    }
+  ]
+}

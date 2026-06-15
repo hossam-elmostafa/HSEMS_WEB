@@ -1,14 +1,26 @@
 /**
  * Screen handler: Aspects Review (HSE_AspctsRvwAtRvw)
- * Menu path: Environment -> Aspects Register -> Aspects Review (from HSE.json)
- * C++: EnvrnmntAspctReviewCategory – ACCEPTED (EnvAspctRvwAccpt), REJECTED (EnvAspctRjct).
+ * Menu path: Environment -> Aspects Register -> Aspects Review
+ * C++: EnvrnmntAspctReviewCategory – DELETE/NEW off, policy HSEPLC_EDTASPCTRVWSCR,
+ *      DisplayFieldChange risk on RSKRNK_1, ACCEPTED / REJECTED.
+ *
+ * <!-- RQ_HSE_23_3_26_22_02 -->
  */
+
+import {
+  applyAspectLineRiskValidation,
+  fetchHseplcAspectFlags,
+  isAspectsLineTab,
+} from './aspectsRegisterPolicy.js';
 
 const TABLE_VIEW = 'HSE_ASPCTS_VIEW';
 const KEY_FIELD = 'PrmryKy';
 
 const BTN_ACCEPTED = 'ACCEPTED';
 const BTN_REJECTED = 'REJECTED';
+
+/** <!-- RQ_HSE_23_3_26_22_02 --> */
+let _devInterfaceObj = {};
 
 function getPrimaryKey(devInterfaceObj) {
   if (!devInterfaceObj?.FormGetField) return '';
@@ -21,9 +33,6 @@ function escapeSqlString(val) {
   return String(val).replace(/'/g, "''");
 }
 
-/**
- * Accept: EXECUTE EnvAspctRvwAccpt '<PrmryKy>', then refresh.
- */
 async function handleAccept(devInterfaceObj) {
   const { executeSQLPromise, refreshData } = devInterfaceObj || {};
   if (!executeSQLPromise) return;
@@ -38,9 +47,6 @@ async function handleAccept(devInterfaceObj) {
   }
 }
 
-/**
- * Reject: EXECUTE EnvAspctRjct '<PrmryKy>', then refresh.
- */
 async function handleReject(devInterfaceObj) {
   const { executeSQLPromise, refreshData } = devInterfaceObj || {};
   if (!executeSQLPromise) return;
@@ -57,6 +63,7 @@ async function handleReject(devInterfaceObj) {
 
 export async function ButtonClicked(eventObj) {
   const { Button_Name, devInterfaceObj } = eventObj || {};
+  _devInterfaceObj = devInterfaceObj || _devInterfaceObj;
   const btn = (Button_Name && String(Button_Name).toUpperCase()) || '';
 
   if (btn === BTN_ACCEPTED) {
@@ -68,6 +75,49 @@ export async function ButtonClicked(eventObj) {
   }
 }
 
+export async function SubFieldChanged(strScrTag, strTabTag, fieldName, oldFieldVal, fieldVal, devInterfaceObj) {
+  const dev = devInterfaceObj || _devInterfaceObj;
+  if (!isAspectsLineTab(strTabTag)) return { cancel: 0 };
+  return applyAspectLineRiskValidation(dev, fieldName, { showInvalidMessage: false, mode: 'review' });
+}
+
+/**
+ * C++ DisplayScreenReady — always disable NEW + DELETE; if allowAspctReview N, disable SAVE.
+ * RQ_HSE_23_3_26_22_02 — tab toolbar parity via FormEnableButton (bForCurrTabOnly).
+ */
 export async function ShowScreen(setScreenDisableBtn, strScrTag, strTabTag, devInterfaceObj) {
-  setScreenDisableBtn(false, false, false);
+  _devInterfaceObj = devInterfaceObj || _devInterfaceObj;
+  const dev = _devInterfaceObj;
+  const fe = dev?.FormEnableButton;
+
+  const resetTabToolbar = () => {
+    if (typeof fe !== 'function') return;
+    fe(2, 1, 'NEW', true, true);
+    fe(2, 1, 'SAVE', true, true);
+    fe(2, 1, 'DELETE', true, true);
+  };
+
+  resetTabToolbar();
+
+  try {
+    const pol = await fetchHseplcAspectFlags(dev);
+    if (pol.allowReview === 'N') {
+      setScreenDisableBtn(true, true, true);
+      if (typeof fe === 'function') {
+        fe(2, 1, 'NEW', false, true);
+        fe(2, 1, 'SAVE', false, true);
+        fe(2, 1, 'DELETE', false, true);
+      }
+      return;
+    }
+  } catch (e) {
+    console.warn('[Web_HSE] Aspects Review ShowScreen policy:', e);
+  }
+
+  setScreenDisableBtn(true, false, true);
+  if (typeof fe === 'function') {
+    fe(2, 1, 'NEW', false, true);
+    fe(2, 1, 'DELETE', false, true);
+    fe(2, 1, 'SAVE', true, true);
+  }
 }

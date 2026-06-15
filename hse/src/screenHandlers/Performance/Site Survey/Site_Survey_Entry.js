@@ -1,18 +1,19 @@
 /**
  * Screen handler: Site Survey Entry (HSE_TgSitSrvyEnt)
  * Menu path: Performance -> Site Survey -> Site Survey Entry (from HSE.json)
- * C++: SitSrvyEntCategory + SitSrvyCategory – SITSRVYENT_ENTCMPLT (CompleteSitSrvy), SITSRVYENT_RJCT (rejectRecord + rejectSitSrvy), SITSRVYRQRDACTN_RQRDACTNBTN (Open Required Actions).
+ * C++: SitSrvyEntCategory + SitSrvyCategory – SITSRVYENT_ENTCMPLT (CompleteSitSrvy), SITSRVYRQRDACTN_RQRDACTNBTN (Open Required Actions).
+ * RQ_HSE_23_3_26_22_44: SITSRVYENT_RJCT handled in ModuleButtonHandlers (reject reason on Confirmation/Follow-up only on desktop; Entry uses direct SP if RJCT appears).
  */
 
 import { getCurrentRecordPRMKY } from '../../../utils/rejectReasonUtils.js';
-import { sendButtonClickToBackend } from '../../../services/Observation service/ObservationService.js';
+import { openSiteSurveyRequiredActionsPopup } from './siteSurveyRequiredActions.js';
+import { applyFindingLineSerialIfEmpty } from './siteSurveySerialUtils.js';
 
 const TABLE_MAIN = 'HSE_SITSRVYENT';
 const KEY_FIELD = 'SITSRVYENT_SITSRVYNO';
-const TABLE_FNDNG = 'HSE_SITSRVYENTFNDNG';
-const FNDNG_LINK = 'MAINLINK';
-const POPUP_TAG = 'HSE_TgSitSrvyRqrdActn';
-const SCREEN_CAPTION = 'Site Survey Entry';
+
+// RQ_HSE_23_3_26_22_44: SubFieldChanged (findings line serial — SitSrvyCategory::DisplayFieldChange)
+let _devInterfaceObj = {};
 
 function getKeyFromForm(devInterfaceObj) {
   if (!devInterfaceObj?.FormGetField) return '';
@@ -41,6 +42,8 @@ function escapeSqlString(val) {
   if (val == null) return '';
   return String(val).replace(/'/g, "''");
 }
+
+const SCREEN_CAPTION = 'Site Survey Entry';
 
 /**
  * SITSRVYENT_ENTCMPLT: Validate record saved, then EXECUTE completeSitSrvyTXN key, screenCaption, userName.
@@ -71,22 +74,6 @@ async function handleEntryComplete(eventObj, devInterfaceObj) {
   }
 }
 
-/**
- * SITSRVYRQRDACTN_RQRDACTNBTN: Open Required Actions popup for current finding row.
- * C++: strKeyField = FormGetField("HSE_SITSRVYENTFNDNG","MAINLINK"); ShowScreen("HSE_TGSITSRVYRQRDACTN", ..., strSQL, defValues with SITSRVYRQRDACTN_LNK and TXNSTS|1).
- */
-function handleRequiredActions(eventObj, devInterfaceObj) {
-  const openScr = devInterfaceObj?.openScr;
-  const FormGetField = devInterfaceObj?.FormGetField;
-  if (typeof openScr !== 'function' || !FormGetField) return;
-  const linkVal = FormGetField(TABLE_FNDNG, FNDNG_LINK, 'scr');
-  if (linkVal == null || linkVal === '') return;
-  const esc = escapeSqlString(String(linkVal).trim());
-  const strCriteria = `SELECT * FROM HSE_SITSRVYRQRDACTN WHERE (SITSRVYRQRDACTN_LNK = '${esc}')`;
-  const defValObj = { SITSRVYRQRDACTN_LNK: linkVal, TXNSTS: '1' };
-  openScr(POPUP_TAG, {}, strCriteria, 'edit', false, defValObj, false, false);
-}
-
 export async function ButtonClicked(eventObj) {
   const { Button_Name, strScrTag, devInterfaceObj } = eventObj || {};
   const btn = (Button_Name && String(Button_Name).toUpperCase()) || '';
@@ -96,14 +83,29 @@ export async function ButtonClicked(eventObj) {
     return;
   }
   if (btn === 'SITSRVYRQRDACTN_RQRDACTNBTN') {
-    handleRequiredActions(eventObj, devInterfaceObj);
-    return;
-  }
-  if (btn === 'SITSRVYENT_RJCT') {
-    sendButtonClickToBackend(btn, strScrTag, eventObj, devInterfaceObj);
+    openSiteSurveyRequiredActionsPopup(devInterfaceObj, strScrTag);
   }
 }
 
+/**
+ * C++ SitSrvyCategory::DisplayFieldChange: any field name containing SITSRVYENTFNDNG
+ * and empty SITSRVYENTFNDNG_SRIL → getNewSerialNoForATab on HSE_SITSRVYENTFNDNG.
+ */
+export async function SubFieldChanged(strScrTag, strTabTag, fieldName, oldFieldVal, fieldVal, devInterfaceObj) {
+  const dev = devInterfaceObj || _devInterfaceObj;
+  if (!dev?.FormGetField) return { cancel: 0 };
+
+  const fld = String(fieldName || '').toUpperCase();
+  if (fld.indexOf('SITSRVYENTFNDNG') < 0) return { cancel: 0 };
+
+  const serialVal = String(dev.FormGetField('HSE_SITSRVYENTFNDNG', 'SITSRVYENTFNDNG_SRIL', 'tab') ?? '').trim();
+  if (serialVal !== '') return { cancel: 0 };
+
+  await applyFindingLineSerialIfEmpty(dev);
+  return { cancel: 0 };
+}
+
 export async function ShowScreen(setScreenDisableBtn, strScrTag, strTabTag, devInterfaceObj) {
+  _devInterfaceObj = devInterfaceObj || _devInterfaceObj;
   setScreenDisableBtn(false, false, false);
 }

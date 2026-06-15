@@ -2,9 +2,11 @@
  * Screen handler: Incident Medical Report Entry (HSE_TgIncdntMdclRprt)
  * Menu path: Safety -> Incident -> Incident Medical Report Entry (from HSE.json)
  * C++: HSEMSCommonCategory – INCDNTMDCLRPRT_ENTRYCMPLT (completeIncdntMdclRprt); INCDNTMDCLRPRTINJRDPRSNS_* delegate to backend.
+ * RQ_HSE_23_3_26_3_36
+ * RQ_HSE_13_3_26_4_18 — injured-person pop-ups via incidentInjuredPersonPopups.js
  */
 
-import { sendButtonClickToBackend } from '../../../services/Observation service/ObservationService.js';
+import { handleMedicalInjuredPersonCustomButton } from '../../../utils/incidentInjuredPersonPopups.js';
 
 const TABLE = 'HSE_INCDNTMDCLRPRT';
 const KEY_FIELD = 'IncdntMdclRprt_FlshNo';
@@ -38,9 +40,7 @@ export async function ButtonClicked(eventObj) {
     }
     return;
   }
-  if (['INCDNTMDCLRPRTINJRDPRSNS_INJRDBODYPART', 'INCDNTMDCLRPRTINJRDPRSNS_INJRYTYP', 'INCDNTMDCLRPRTINJRDPRSNS_INJRYCTGRY'].includes(btn)) {
-    sendButtonClickToBackend(btn, strScrTag, eventObj, devInterfaceObj);
-  }
+  if (handleMedicalInjuredPersonCustomButton(devInterfaceObj, btn, strScrTag)) return;
 }
 
 export async function ShowScreen(setScreenDisableBtn, strScrTag, strTabTag, devInterfaceObj) {

@@ -1,4 +1,5 @@
 import { sendButtonClickToBackend, isObservationTabsEnabled, manageObservationTabs, manageCommentsTabToolBar } from '../services/Observation service/ObservationService';
+import { getPendingRejectObservation } from '../services/Observation service/ObservationButtonHandlers.js';
 import { OBSERVATION_SCREEN_TAGS } from '../config/constants';
 import { getScreenHandler } from '../screenHandlers/index';
 import { handleModuleButton } from '../services/ModuleButtonHandlers/index.js';
@@ -14,11 +15,39 @@ let devInterfaceObj = {};
 export const ScreensInNewMode = Object.create(null);
 
 /**
+ * BUG_HSE_5_4_26_15_27: Ensure HSE_RJCTRSN INSERT payload includes link/module/tracing (hidden fields) so SQL unique index is not violated by (MISS-INFO, 0, NULL, NULL).
+ */
+function mergeRjctRsnSeedIntoFullRecord(fullRecord, seed) {
+  if (!fullRecord || typeof fullRecord !== 'object' || !seed) return;
+  const pairs = [
+    ['RJCTRSN_LINKWITHMAIN', seed.RJCTRSN_LINKWITHMAIN],
+    ['RJCTRSN_MODULETYPE', seed.RJCTRSN_MODULETYPE],
+    ['RJCTRSN_TRACINGLNK', seed.RJCTRSN_TRACINGLNK],
+  ];
+  for (const [key, val] of pairs) {
+    if (val === undefined || val === null) continue;
+    const cur = fullRecord[key];
+    if (cur === undefined || cur === null || cur === '') {
+      fullRecord[key] = val;
+    }
+  }
+}
+
+/**
  * Set devInterface functions for ButtonClicked handler
  * @param {Object} devInterface - Object containing devInterface functions
  */
 export function setDevInterface(devInterface) {
   devInterfaceObj = devInterface || {};
+}
+
+/**
+ * Read-only access to the dev interface (SQL, messages, etc.) for menu events and screen handlers.
+ * Set by `hse.js` via `setDevInterface` after app init.
+ * @returns {Object}
+ */
+export function getDevInterface() {
+  return devInterfaceObj;
 }
 
 /**
@@ -125,6 +154,22 @@ export async function toolBarButtonClicked(eventObj, callBackFn) {
   strBtnName = strBtnName ? strBtnName.toString().toUpperCase() : '';
   strTabTag = strTabTag ? strTabTag.toString().toUpperCase() : '';
 
+  // BUG_HSE_5_4_26_15_27: Pre-SAVE merge — WebInfra fullRecord for new reject rows can omit hidden RJCTRSN_* keys → duplicate key (MISS-INFO, 0, NULL, NULL).
+  if (
+    strBtnName === 'SAVE' &&
+    complete === 0 &&
+    strScrTag === 'HSE_TGRJCTRSN' &&
+    strTabTag === '' &&
+    isNewMode === true &&
+    fullRecord &&
+    typeof fullRecord === 'object'
+  ) {
+    const pending = getPendingRejectObservation();
+    if (pending?.rjctRsnSeed) {
+      mergeRjctRsnSeedIntoFullRecord(fullRecord, pending.rjctRsnSeed);
+    }
+  }
+
   const screenHandler = getScreenHandler(strScrTag);
   let observationTabsHandledByHandler = false;
   if (screenHandler && typeof screenHandler.toolBarButtonClicked === 'function') {
@@ -223,7 +268,7 @@ export async function ButtonClicked(eventObj) {
     const normalizedStrScrTag = strScrTag ? strScrTag.toString().toUpperCase() : '';
     const normalizedButtonName = Button_Name ? Button_Name.toString().toUpperCase() : '';
 
-    // 1) Try module button handlers (Risk Assessment, Site Survey, PTW, Incident, Audit, Performance Measurement, Rescue Plan)
+    // 1) Try module button handlers (Risk Assessment, Site Survey, PTW, Incident, Audit, Performance Measurement, Rescue Plan — RQ_HSE_23_3_26_17_05: cancel / return / CMS_RSNS)
     if (normalizedButtonName && normalizedStrScrTag) {
       const moduleHandled = await handleModuleButton(normalizedButtonName, normalizedStrScrTag, eventObj, devInterfaceObj);
       if (moduleHandled) return;

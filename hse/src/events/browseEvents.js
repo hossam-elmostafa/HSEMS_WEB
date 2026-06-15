@@ -1,5 +1,8 @@
+import { getDevInterface } from './buttonEvents.js';
+
 /**
  * OnBeforeBrowseButtonClick
+ * RQ_HSE_12_4_26_00_40 — GAP-3: resolve devInterface via getDevInterface() (set in hse.js) when brwsObj omits it.
  * @param {string} strScrTag header screen tag 
  * @param {string} strTabTag tab tag if screen is tab else this will be ''
  * @param {object} brwsObj 
@@ -21,10 +24,61 @@
  * @returns {Promise} this function always return promise with browsObj,You can keep browsObj as it or change any attribute and return it.
  */
 export function OnBeforeBrowseButtonClick(strScrTag, strTabTag, brwsObj, fullRecord) {
-  return new Promise((resolve, reject) => {
-    strScrTag = strScrTag.toString().toUpperCase();   
+  return new Promise(async (resolve, reject) => { // eslint-disable-line no-async-promise-executor
+    strScrTag = strScrTag.toString().toUpperCase();
+    // RQ_HSE_12_4_26_00_40 — GAP-3: filter HSEVRFDBY browse fields on CAR screens
+    try {
+      await applyHseVerifiedByBrowseFilter(strScrTag, brwsObj, fullRecord);
+    } catch (e) {
+      console.warn('[Web_HSE] RQ_HSE_12_4_26_00_40 GAP-3 browse filter:', e);
+    }
     resolve(brwsObj);
   });
+}
+
+// RQ_HSE_12_4_26_00_40 — GAP-3: HSEVRFDBY browse filtering (C++ DisplayBeforBrowsingButtonClick)
+const HSEVRFDBY_SCREENS = new Set([
+  'HSE_TGCRCTVEACCJOBVRFCTN', 'HSE_TGACTNSUNDREXEC',
+  'HSE_TGCRCTVEACCCNFRMTN', 'HSE_TGCARFLWUPVSTS',
+]);
+
+async function applyHseVerifiedByBrowseFilter(scrTag, brwsObj, fullRecord) {
+  if (!brwsObj || !HSEVRFDBY_SCREENS.has(scrTag)) return;
+  const fieldName = String(brwsObj.fieldObj?.strFieldName || brwsObj.fieldObj?.fieldName || '').toUpperCase();
+  if (!fieldName.includes('HSEVRFDBY')) return;
+
+  const siteVal = findFieldCaseInsensitive(fullRecord, [
+    'CRCTVEACCENT_SIT', 'CRENTRY_ST', 'ACTNSENTRY_SIT',
+  ]);
+  if (!siteVal) return;
+
+  const { getHseVerifiedByBrowseFilter } = await import('../utils/carBrowsingFilters.js');
+  // RQ_HSE_12_4_26_00_40 — GAP-3: browse framework does not pass devInterface on brwsObj; use same instance as ButtonClicked/ShowScreen
+  const devInterface =
+    brwsObj._devInterfaceObj ||
+    (typeof getDevInterface === 'function' ? getDevInterface() : null) ||
+    globalThis.__hseDevInterface;
+  if (!devInterface?.executeSQLPromise) return;
+  const whereClause = await getHseVerifiedByBrowseFilter(devInterface, siteVal);
+  if (whereClause) {
+    brwsObj.BrowsingSQL = brwsObj.BrowsingSQL
+      ? `${brwsObj.BrowsingSQL} AND ${whereClause}`
+      : `WHERE ${whereClause}`;
+  }
+}
+
+function findFieldCaseInsensitive(record, candidates) {
+  if (!record || typeof record !== 'object') return '';
+  const keys = Object.keys(record);
+  for (const c of candidates) {
+    const cu = c.toUpperCase();
+    const found = keys.find(k => k.toUpperCase() === cu);
+    if (found) {
+      const v = String(record[found] ?? '').trim();
+      if (v) return v;
+    }
+  }
+  return '';
 }
 
 /**

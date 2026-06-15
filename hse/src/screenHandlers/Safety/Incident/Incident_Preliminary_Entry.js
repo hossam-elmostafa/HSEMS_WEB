@@ -2,10 +2,21 @@
  * Screen handler: Incident Preliminary Entry (HSE_TgAcdntEnt)
  * Menu path: Safety -> Incident -> Incident Preliminary Entry (from HSE.json)
  * C++: AccidentEntryCategory + AccidentCategory – ACDNTENT_ENTCMPLT, ...; NEW on tabs sets next serial (HSEMSCommonCategory getNxtSrl).
+ * RQ_HSE_13_3_26_4_18 — injured-person pop-ups via incidentInjuredPersonPopups.js
+ *
+ * Web inventory (causes / actions / attachments — optional §2 gap, no APP JSON in repo):
+ * | Tab tag (uppercase) | Tables / behaviour |
+ * | HSE_TGACDNTENTACDNTRSN | HSE_ACDNTENTACDNTRSN; NEW → setNextSerialOnNewTab; custom `ACDNTENTACDNTRSN_GETROTCUS` → executeGetAccidentRootCauses |
+ * | HSE_TGACDNTENTTKNRMDLACTNS | HSE_ACDNTENTTKNRMDLACTNS; NEW serial |
+ * | HSE_TGACDNTENTRECMNDACC | HSE_ACDNTENTRECMNDACC; NEW serial |
+ * | HSE_TGACDNTENTATCH | HSE_ACDNTENTATCH; NEW serial |
+ * Field browse/lookup: host + browseEvents.js defaults unless a defect requires custom criteria.
  */
 
 import { sendButtonClickToBackend } from '../../../services/Observation service/ObservationService.js';
 import { setNextSerialOnNewTab } from '../../../utils/tabNewSerialUtils.js';
+import { handleAccidentInjuredPersonCustomButton } from '../../../utils/incidentInjuredPersonPopups.js';
+import { executeGetAccidentRootCauses } from '../../../services/ModuleButtonHandlers/moduleButtonHandlersUtils.js';
 
 const TABLE_MAIN = 'HSE_ACDNTENT';
 const MAIN_KEY_FIELD = 'ACDNTENT_ACDNTNUM';
@@ -71,6 +82,12 @@ export async function ButtonClicked(eventObj) {
   const { Button_Name, strScrTag, devInterfaceObj } = eventObj || {};
   const btn = (Button_Name && String(Button_Name).toUpperCase()) || '';
   if (INCIDENT_ENTRY_BUTTONS.includes(btn)) {
+    // RQ_HSE_13_3_26_4_18: injured-person pop-ups (OpenBodyParts, injury type, analysis, PPE) via openScr
+    if (await handleAccidentInjuredPersonCustomButton(devInterfaceObj, btn, strScrTag)) return;
+    if (btn === 'ACDNTENTACDNTRSN_GETROTCUS') {
+      await executeGetAccidentRootCauses(devInterfaceObj);
+      return;
+    }
     sendButtonClickToBackend(btn, strScrTag, eventObj, devInterfaceObj);
   }
 }

@@ -32,6 +32,7 @@ export function SubFieldChanged(strScrTag, strTabTag, fieldName, oldFieldVal, fi
       cancel : 0
     }
     try {
+<<<<<<< HEAD
       const screenHandler = getScreenHandler(strScrTag);
       if (screenHandler && typeof screenHandler.SubFieldChanged === 'function') {
         const handlerResult = await screenHandler.SubFieldChanged(
@@ -45,6 +46,16 @@ export function SubFieldChanged(strScrTag, strTabTag, fieldName, oldFieldVal, fi
         );
         if (handlerResult && handlerResult.cancel) {
           retObj.cancel = handlerResult.cancel;
+=======
+      // RQ_HSE_23_3_26_18_00: delegate to screen handler (mirrors MainSubReposition / ShowScreen pattern)
+      const screenHandler = getScreenHandler(strScrTag);
+      if (screenHandler && typeof screenHandler.SubFieldChanged === 'function') {
+        const result = await screenHandler.SubFieldChanged(
+          strScrTag, strTabTag, fieldName, oldFieldVal, fieldVal, devInterfaceObj
+        );
+        if (result && result.cancel) {
+          retObj.cancel = result.cancel;
+>>>>>>> 6153395649cda3b85e1ee04083fc6eddac0c8977
         }
       }
       resolve(retObj);
@@ -87,10 +98,10 @@ export function MainSubReposition(strFormTag, Main_Position, Seleted_Tab, strSel
       const { FormGetField } = devInterfaceObj;
       if (FormGetField) {
         // Try to get the observation number to verify link field
-        const obsNum = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM') ||
-                      FormGetField('HSE_vwNRSTMISCENT', 'NrstMiscEnt_NrstMiscNum') ||
-                      FormGetField(strFormTag, 'NRSTMISCENT_NRSTMISCNUM') ||
-                      FormGetField(strFormTag, 'NrstMiscEnt_NrstMiscNum') ||
+        const obsNum = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM', 'SCR') ||
+                      FormGetField('HSE_vwNRSTMISCENT', 'NrstMiscEnt_NrstMiscNum', 'SCR') ||
+                      FormGetField(strFormTag, 'NRSTMISCENT_NRSTMISCNUM', 'SCR') ||
+                      FormGetField(strFormTag, 'NrstMiscEnt_NrstMiscNum', 'SCR') ||
                       '';
         console.log('[Web_HSE] Tracing tab accessed:', {
           formTag: strFormTag,

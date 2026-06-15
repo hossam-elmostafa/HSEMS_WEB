@@ -1,4 +1,13 @@
 import { toast } from "react-toastify";
+// BUG_HSE_HSM_14_3_26_17_33: use getScreenCaption so reject tracing tab Source Screen is caption (desktop behaviour)
+import { getScreenCaption } from "../ModuleButtonHandlers/moduleButtonHandlersUtils.js";
+// RQ_HSE_12_4_26_00_40 — M6: CAR serial allocation + insert retry on duplicate key
+import {
+  getNextAllocatedCrentryCrn,
+  getNextAllocatedCrentryCrsrln,
+} from "../../utils/carCrentrySerialAllocation.js";
+// RQ_HSE_12_4_26_00_40 — GAP-5: trigger context in same batch as HSE_CRENTRY INSERT
+import { buildCrentryTriggerContextBatchSql } from "../../utils/carTriggerContextBatch.js";
 
 /**
  * ObservationButtonHandlers.js
@@ -16,8 +25,9 @@ import { toast } from "react-toastify";
  * - RQ_HSM_22_12_25_11_43: Handle Reward Entry Completed Custom Button
  */
 
-// Store pending reject execution info (module-level). Supports Observation, PTW, Incident, Risk Assessment, Vehicle Accident.
-// moduleType: 'OBSERVATION' | 'PTW' | 'INCIDENT' | 'RISK' | 'VEHICLE_ACCIDENT'
+// Store pending reject execution info (module-level). Supports Observation, PTW, Incident, Risk Assessment, Site Survey, Vehicle Accident, Awareness, Rescue Plan cancel.
+// moduleType: 'OBSERVATION' | 'PTW' | 'INCIDENT' | 'RISK' | 'SITE_SURVEY' | 'VEHICLE_ACCIDENT' | 'AWARENESS' | 'RESCUE_CANCEL'
+// RQ_HSE_23_3_26_17_05, RQ_HSE_23_3_26_22_44 (SITE_SURVEY)
 let pendingRejectObservation = null;
 
 export function setPendingRejectObservation(observationInfo) {
@@ -29,9 +39,65 @@ export function clearPendingRejectObservation() {
 }
 
 /**
- * Set pending reject for non-Observation modules (PTW, Incident, Risk Assessment, Vehicle Accident).
+ * BUG_HSE_5_4_26_15_27: Pending reject context for HSE_RJCTRSN SAVE (merge link/module/tracing into fullRecord in toolBarButtonClicked).
+ * @returns {object | null}
+ */
+export function getPendingRejectObservation() {
+  return pendingRejectObservation;
+}
+
+/**
+ * BUG_HSE_5_4_26_15_27: Normalize FormGetField values (incl. DB combo { key, value }) for Observation header gates.
+ */
+function readNrstmiscHeaderFieldForRejectGate(FormGetField, formTag, field) {
+  if (typeof FormGetField !== 'function') return '';
+  let raw;
+  try {
+    raw = FormGetField(formTag, field, 'SCR');
+    if (raw == null || raw === '') raw = FormGetField('HSE_vwNRSTMISCENT', field, 'SCR');
+  } catch (_) {
+    return '';
+  }
+  if (raw == null || raw === undefined) return '';
+  if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+    if (Object.prototype.hasOwnProperty.call(raw, 'value') && raw.value != null && String(raw.value).trim() !== '') {
+      return String(raw.value).trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(raw, 'key') && raw.key != null && String(raw.key).trim() !== '') {
+      return String(raw.key).trim();
+    }
+  }
+  return String(raw).trim();
+}
+
+/**
+ * BUG_HSE_5_4_26_15_27: Desktop order — NearMissConfirmationCategory SAVE validates MUST "Preview Result" (NRSTMISCENT_PRVWRSLT);
+ * CommonCategoryWrapper then ValidateEmptyFields → "Please complete Master record before pressing button" (RQ-3-2021.4 SIT/LOCTYP/WRKLOC).
+ * WebInfra doToolbarAction(SAVE) is a stub, so enforce here before opening reject reason.
+ * @returns {{ ok: true } | { ok: false, message: string }}
+ */
+function validateObservationRejectDesktopParity(FormGetField, formTag) {
+  const ft = (formTag || '').toUpperCase();
+  if (ft !== 'HSE_TGNRSTMISCCNFRMTN' && ft !== 'HSE_TGNRSTMISCFLWUP') {
+    return { ok: true };
+  }
+  const prv = readNrstmiscHeaderFieldForRejectGate(FormGetField, formTag, 'NRSTMISCENT_PRVWRSLT');
+  if (!prv) {
+    return { ok: false, message: 'Preview Result must contain data.' };
+  }
+  const site = readNrstmiscHeaderFieldForRejectGate(FormGetField, formTag, 'NRSTMISCENT_SIT');
+  const locTyp = readNrstmiscHeaderFieldForRejectGate(FormGetField, formTag, 'NRSTMISCENT_LOCTYP');
+  const wrkLoc = readNrstmiscHeaderFieldForRejectGate(FormGetField, formTag, 'NRSTMISCENT_WRKLOC');
+  if (!site || !locTyp || !wrkLoc) {
+    return { ok: false, message: 'Please complete Master record before pressing button' };
+  }
+  return { ok: true };
+}
+
+/**
+ * Set pending reject for non-Observation modules (PTW, Incident, Risk Assessment, Vehicle Accident, Awareness).
  * When user clicks OK on reject reason screen, the appropriate SP or update will run.
- * @param {string} moduleType - 'PTW' | 'INCIDENT' | 'RISK' | 'VEHICLE_ACCIDENT' | 'POTENTIAL_HAZARD' | 'LOSS_ACCIDENT'
+ * @param {string} moduleType - 'PTW' | 'INCIDENT' | 'RISK' | 'VEHICLE_ACCIDENT' | 'POTENTIAL_HAZARD' | 'LOSS_ACCIDENT' | 'AWARENESS'
  * @param {string} keyFieldValue - record key
  * @param {string} sourceScreenName - form/screen tag for SourceScreenName
  * @param {Object} devInterface - getUserName, executeSQLPromise/executeSQL, refreshData, toast
@@ -171,6 +237,20 @@ export async function handleRejectButton(buttonName, screenTag, eventObj, devInt
 
     const executeSQLAsync = executeSQLPromise || executeSQL;
 
+    const formTag = screenTag || 'HSE_TGNRSTMISCCNFRMTN';
+
+    // BUG_HSE_5_4_26_15_27: Match desktop messages when Preview Result / master data incomplete (SAVE + ValidateEmptyFields parity; see validateObservationRejectDesktopParity)
+    const rejectParity = validateObservationRejectDesktopParity(FormGetField, formTag);
+    if (!rejectParity.ok) {
+      toast.warning(rejectParity.message);
+      return;
+    }
+
+    // BUG_HSE_5_4_26_15_27: C++ DoToolBarAction(SAVE) before Reject — same call pattern as handleConfirmButton / RQ_HSE_13_3_26_1_43 (WebInfra doToolbarAction SAVE is still a stub until platform wires handleSaveBtnClk)
+    if (typeof doToolbarAction === 'function') {
+      doToolbarAction('SAVE', formTag, '');
+    }
+
     // Extract event data
     const { fullRecord: fullRecordArr, fullRecordArrKeys } = eventObj || {};
 
@@ -186,13 +266,11 @@ export async function handleRejectButton(buttonName, screenTag, eventObj, devInt
         '';
     }
 
-    const formTag = screenTag || 'HSE_TGNRSTMISCCNFRMTN';
-
     // Fallback: read from form if still empty
     if (!keyFieldValue) {
       keyFieldValue =
-        FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM') ||
-        FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM') ||
+        FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM', 'SCR') ||
+        FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM', 'SCR') ||
         '';
     }
 
@@ -233,7 +311,13 @@ export async function handleRejectButton(buttonName, screenTag, eventObj, devInt
     let rejectReasonCountBefore = 0;
     try {
       const resultBefore = await executeSQLAsync(checkRejectReasonBeforeSql);
-      if (resultBefore && resultBefore.length > 0 && resultBefore[0]) {
+      // BUG_HSE_5_4_26_15_27: WebInfra returns { recordset: [...] }; plain array branch kept for executeSQL-style rows
+      const rs = resultBefore?.recordset || resultBefore?.[0]?.recordset;
+      if (Array.isArray(rs) && rs.length > 0) {
+        const row = rs[0];
+        const val = row.CNT ?? row.cnt ?? Object.values(row)[0];
+        rejectReasonCountBefore = parseInt(val, 10) || 0;
+      } else if (Array.isArray(resultBefore) && resultBefore.length > 0 && resultBefore[0]) {
         const countObj = resultBefore[0];
         rejectReasonCountBefore = parseInt(Object.values(countObj)[0] || 0, 10);
       }
@@ -241,17 +325,30 @@ export async function handleRejectButton(buttonName, screenTag, eventObj, devInt
       console.warn('[Web_HSE] Error checking reject reason count before:', error);
     }
 
+    // BUG_HSE_5_4_26_15_27: openScr(..., isNewMode true) makes saveRec INSERT; unique index RJCTRSN_RJCTRSN_TRACINGLNK_LIN already has (MODULETYPE, TRACINGLNK, LINKWITHMAIN, …) for this observation → duplicate key. If a row exists, open as update (isNewMode false) and do not seed defValObj (load via criteria).
+    const rejectReasonIsNew = rejectReasonCountBefore === 0;
+    const openDefValForReject = rejectReasonIsNew ? defValObj : {};
+
     // Store info for executing rejectObservation after reject reason screen OK button is clicked
     // C++: After reject reason screen closes, checks getgbUpdateRejectedRecord() flag
     // In JS: We use ButtonClicked event to detect when RJCTRSN_BTN_OK is clicked
     // C++: setgbUpdateRejectedRecord(false) is set initially, then true when OK is clicked
+    // BUG_HSE_HSM_14_3_26_17_33: pass screen caption as sourceScreenName so tracing tab Source Screen matches desktop (GetScrCptnByTag)
+    const sourceScreenName = getScreenCaption(formTag) || formTag;
     setPendingRejectObservation({
       keyFieldValue: keyFieldValue.toString(), // Ensure it's a string for the stored procedure
       formTag,
+      sourceScreenName,
       getUserName,
       executeSQLAsync,
       refreshData,
       toast,
+      // BUG_HSE_5_4_26_15_27: SAVE fullRecord often drops hidden fields → NULL link/module + RJCTRSN_RJCTRSN=MISS-INFO duplicates unique index RJCTRSN_RJCTRSN_TRACINGLNK_LIN
+      rjctRsnSeed: {
+        RJCTRSN_LINKWITHMAIN: keyFieldValue,
+        RJCTRSN_MODULETYPE: moduleType,
+        RJCTRSN_TRACINGLNK: 0,
+      },
     });
 
     // Open the reject reason screen - it has its own built-in dialog
@@ -260,9 +357,12 @@ export async function handleRejectButton(buttonName, screenTag, eventObj, devInt
       screenTag: rejectReasonScreenTag,
       observationNumber: keyFieldValue,
       moduleType: moduleType,
+      rejectReasonIsNew,
+      rejectReasonCountBefore,
     });
-    
-    openScr(rejectReasonScreenTag, {}, criteria, 'edit', true, defValObj);
+
+    // BUG_HSE_5_4_26_15_27: isNewMode must match whether HSE_RJCTRSN row exists (see rejectReasonIsNew)
+    openScr(rejectReasonScreenTag, {}, criteria, 'edit', rejectReasonIsNew, openDefValForReject);
 
     // C++: After screen closes, if getgbUpdateRejectedRecord() == true, execute rejectObservation
     // In JS: We use ButtonClicked event to detect when RJCTRSN_BTN_OK is clicked
@@ -297,6 +397,7 @@ export async function handleConfirmButton(buttonName, screenTag, eventObj, devIn
       getUserName,
       refreshData,
       AskYesNoMessage,
+      doToolbarAction,
     } = devInterface;
 
     // Validate required functions
@@ -314,6 +415,13 @@ export async function handleConfirmButton(buttonName, screenTag, eventObj, devIn
 
     const executeSQLAsync = executeSQLPromise || executeSQL;
 
+    const formTag = screenTag || 'HSE_TGNRSTMISCCNFRMTN';
+
+    // RQ_HSE_13_3_26_1_43: C++ saves before confirm – DoToolBarAction(TOOLBAR_SAVE, strFormTag, "")
+    if (typeof doToolbarAction === 'function') {
+      doToolbarAction('SAVE', formTag, '');
+    }
+
     // Extract event data
     const { fullRecord: fullRecordArr, fullRecordArrKeys } = eventObj || {};
 
@@ -329,13 +437,11 @@ export async function handleConfirmButton(buttonName, screenTag, eventObj, devIn
         '';
     }
 
-    const formTag = screenTag || 'HSE_TGNRSTMISCCNFRMTN';
-
     // Fallback: read from form if still empty
     if (!keyFieldValue) {
       keyFieldValue =
-        FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM') ||
-        FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM') ||
+        FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM', 'SCR') ||
+        FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM', 'SCR') ||
         '';
     }
 
@@ -344,13 +450,13 @@ export async function handleConfirmButton(buttonName, screenTag, eventObj, devIn
       return;
     }
 
-    // Check if there is a new reject reason for this record
-    // Equivalent to: IsNewRjcRsnExist('NRSTMISCENT-L1', keyFieldValue)
+    // GAP R3: Pending reject reasons — L1 (confirmation) and L2 (follow-up), matching C++ module types
+    const escKey = keyFieldValue.replace(/'/g, "''");
     const checkRejectSql = `
       SELECT COUNT(0) AS CNT
       FROM HSE_RJCTRSN
-      WHERE RJCTRSN_MODULETYPE = 'NRSTMISCENT-L1'
-        AND RJCTRSN_LINKWITHMAIN = '${keyFieldValue.replace(/'/g, "''")}'
+      WHERE RJCTRSN_MODULETYPE IN ('NRSTMISCENT-L1', 'NRSTMISCENT-L2')
+        AND RJCTRSN_LINKWITHMAIN = '${escKey}'
         AND ISNULL(RJCTRSN_TRACINGLNK, 0) = 0
     `;
 
@@ -369,7 +475,8 @@ export async function handleConfirmButton(buttonName, screenTag, eventObj, devIn
     }
 
     // Build stored procedure call
-    const sourceScreenName = formTag;
+    // BUG_HSE_HSM_14_3_26_17_33: tracing tab Source Screen must be caption not form tag (desktop uses GetScrCptnByTag).
+    const sourceScreenName = getScreenCaption(formTag) || formTag;
     const userName = getUserName() || '';
     const spSql = `EXECUTE confirmNearMissTXN '${keyFieldValue.replace(/'/g, "''")}','${sourceScreenName.replace(
       /'/g,
@@ -379,10 +486,23 @@ export async function handleConfirmButton(buttonName, screenTag, eventObj, devIn
     // If reject reasons exist, ask the user before proceeding
     if (rejectReasonCount > 0) {
       const msg =
-        'Reject reason for this record exists.\n\rDo you want to delete it and approve this observation?';
+        'A reject reason exists for this observation (review or follow-up).\n\rDo you want to delete it and approve?';
       const confirmed = await AskYesNoMessage('Prompt', msg);
       if (!confirmed) {
-        // User chose not to proceed
+        return;
+      }
+      // RQ_HSE_13_3_26_1_43 + GAP R3: delete pending L1/L2 rows before confirming
+      try {
+        const deleteRjctSql = `
+          DELETE FROM HSE_RJCTRSN
+          WHERE RJCTRSN_MODULETYPE IN ('NRSTMISCENT-L1', 'NRSTMISCENT-L2')
+            AND RJCTRSN_LINKWITHMAIN = '${escKey}'
+            AND ISNULL(RJCTRSN_TRACINGLNK, 0) = 0
+        `;
+        await executeSQLAsync(deleteRjctSql);
+      } catch (delErr) {
+        console.error('[Web_HSE] Failed to delete reject reasons:', delErr);
+        toast.error('Error deleting reject reasons. Please try again.');
         return;
       }
     }
@@ -469,13 +589,13 @@ export async function handleCancelButton(buttonName, screenTag, eventObj, devInt
       // Try view name first (most reliable), then form tag
       // Wrap in try-catch to handle cases where form/view doesn't exist
       try {
-        currentStatus = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_RECSTS') || '';
+        currentStatus = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_RECSTS', 'SCR') || '';
       } catch (e) {
         // Ignore error, try next option
       }
       if (!currentStatus) {
         try {
-          currentStatus = FormGetField(formTag, 'NRSTMISCENT_RECSTS') || '';
+          currentStatus = FormGetField(formTag, 'NRSTMISCENT_RECSTS', 'SCR') || '';
         } catch (e) {
           // Ignore error, use empty string
         }
@@ -508,20 +628,20 @@ export async function handleCancelButton(buttonName, screenTag, eventObj, devInt
     if (!keyFieldValue) {
       // Wrap in try-catch to handle cases where form/view doesn't exist
       try {
-        keyFieldValue = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM') || '';
+        keyFieldValue = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM', 'SCR') || '';
       } catch (e) {
         // Ignore error, try next option
       }
       if (!keyFieldValue) {
         try {
-          keyFieldValue = FormGetField(formTag, 'NrstMiscEnt_NrstMiscNum') || '';
+          keyFieldValue = FormGetField(formTag, 'NrstMiscEnt_NrstMiscNum', 'SCR') || '';
         } catch (e) {
           // Ignore error, try next option
         }
       }
       if (!keyFieldValue) {
         try {
-          keyFieldValue = FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM') || '';
+          keyFieldValue = FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM', 'SCR') || '';
         } catch (e) {
           // Ignore error, use empty string
         }
@@ -780,17 +900,27 @@ export async function handleRewardEntryCompleteButton(buttonName, screenTag, eve
  */
 export async function handleEntryCompleteButton(buttonName, screenTag, eventObj, devInterface) {
   try {
-    const { FormGetField, executeSQL, executeSQLPromise, getUserName, refreshData } = devInterface;
-    
+    const { FormGetField, executeSQL, executeSQLPromise, getUserName, refreshData, doToolbarAction } = devInterface;
+
     // Check if required functions are available
     if (!FormGetField || (!executeSQL && !executeSQLPromise) || !getUserName || !refreshData) {
       console.error('[Web_HSE] Missing required devInterface functions for Entry Complete button');
       toast.error('System error: Required functions not available');
       return;
     }
-    
+
     // Prefer executeSQLPromise for async operations, fallback to executeSQL
     const executeSQLAsync = executeSQLPromise || executeSQL;
+
+    // GAP R1: C++ save-then-act parity with Confirm/Close (NearMissEntryCategory — persist before completeNearMissTXN)
+    const entryFormTag = screenTag || 'HSE_TgNrstMiscEnt';
+    if (typeof doToolbarAction === 'function') {
+      doToolbarAction('SAVE', entryFormTag, '');
+    } else {
+      console.warn(
+        '[Web_HSE] Observation Entry Complete: doToolbarAction missing — Web_HSE should wire SAVE for full desktop parity (GAP R7)'
+      );
+    }
 
     // Extract event data
     // C++: CString strSubFormTag(pCustomButtonClicked->SubForm_Tag);
@@ -826,20 +956,20 @@ export async function handleEntryCompleteButton(buttonName, screenTag, eventObj,
       // Fallback: try to get from form field
       // Try multiple form tags as fallback (view name is more reliable)
       try {
-        observationId = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM') || '';
+        observationId = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM', 'SCR') || '';
       } catch (e) {
         // Ignore error, try next option
       }
       if (!observationId) {
         try {
-          observationId = FormGetField('HSE_TgNrstMiscEnt', 'NRSTMISCENT_NRSTMISCNUM') || '';
+          observationId = FormGetField('HSE_TgNrstMiscEnt', 'NRSTMISCENT_NRSTMISCNUM', 'SCR') || '';
         } catch (e) {
           // Ignore error, try next option
         }
       }
       if (!observationId && screenTag) {
         try {
-          observationId = FormGetField(screenTag, 'NRSTMISCENT_NRSTMISCNUM') || '';
+          observationId = FormGetField(screenTag, 'NRSTMISCENT_NRSTMISCNUM', 'SCR') || '';
         } catch (e) {
           // Ignore error
         }
@@ -861,20 +991,20 @@ export async function handleEntryCompleteButton(buttonName, screenTag, eventObj,
     // Try multiple form tags to get description (view name is more reliable)
     let description = '';
     try {
-      description = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCDESC') || '';
+      description = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCDESC', 'SCR') || '';
     } catch (e) {
       // Ignore error, try next option
     }
     if (!description) {
       try {
-        description = FormGetField('HSE_TgNrstMiscEnt', 'NRSTMISCENT_NRSTMISCDESC') || '';
+        description = FormGetField('HSE_TgNrstMiscEnt', 'NRSTMISCENT_NRSTMISCDESC', 'SCR') || '';
       } catch (e) {
         // Ignore error, try next option
       }
     }
     if (!description && screenTag) {
       try {
-        description = FormGetField(screenTag, 'NRSTMISCENT_NRSTMISCDESC') || '';
+        description = FormGetField(screenTag, 'NRSTMISCENT_NRSTMISCDESC', 'SCR') || '';
       } catch (e) {
         // Ignore error - description update is optional
       }
@@ -908,9 +1038,8 @@ export async function handleEntryCompleteButton(buttonName, screenTag, eventObj,
     
     // Get source screen name
     // C++: CString strSourceScreenName = GetScrCptnByTag(66, pCustomButtonClicked->Form_Tag, "");
-    // Note: GetScrCptnByTag gets the screen caption from the screen tag
-    // For now, we'll use the screen tag as the source screen name (this matches other implementations)
-    const sourceScreenName = screenTag || 'HSE_TgNrstMiscEnt';
+    // BUG_HSE_HSM_14_3_26_17_33: tracing tab Source Screen must be caption not form tag (desktop uses GetScrCptnByTag).
+    const sourceScreenName = getScreenCaption(screenTag) || screenTag || 'Observation Entry';
     
     // Get user name
     // C++: CString strUserName = GetUserLogin();
@@ -949,18 +1078,204 @@ export async function handleEntryCompleteButton(buttonName, screenTag, eventObj,
   }
 }
 
+/** RQ_HSE_12_4_26_00_40 — GAP-6: backoff between PrmKy lookup attempts after INSERT */
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
- * Handle Close button click
+ * RQ_HSE_12_4_26_00_40 — GAP-6: surface image-copy / PrmKy issues to operators (toast + optional modal)
+ * @param {{ AskYesNoMessage?: (msg: string) => void }} [notify]
+ */
+function notifyObservationCarImageGap6(notify, message) {
+  const full = `${message} You may attach images manually on the CAR. (RQ_HSE_12_4_26_00_40 GAP-6)`;
+  toast.error(full);
+  const fn = notify?.AskYesNoMessage;
+  if (typeof fn === 'function') {
+    try {
+      fn(full);
+    } catch (_) {
+      /* non-blocking */
+    }
+  }
+}
+
+/**
+ * RQ_HSE_13_3_26_1_43: Auto-generate a CAR record from a closed observation when Require CAR = Y.
+ * C++ ref: NearMissFollowUpCategory::DisplayCustomButtonClicked (lines 69-205)
+ * Reads observation form fields, queries policy, inserts into HSE_CRENTRY, copies images, shows toast.
+ * @param {{ AskYesNoMessage?: (msg: string) => void }} [notify] RQ_HSE_12_4_26_00_40 — GAP-6
+ */
+async function generateCARFromObservation(formTag, obsKeyFieldValue, executeSQLAsync, FormGetField, userName, notify = {}) {
+  const readField = (field) => {
+    try { return (FormGetField(formTag, field, 'SCR') || FormGetField('HSE_vwNRSTMISCENT', field, 'SCR') || '').toString().trim(); }
+    catch (_) { return ''; }
+  };
+  const esc = (v) => (v == null ? '' : String(v).replace(/'/g, "''"));
+
+  const strRequireCAR = readField('NRSTMISCENT_RQRCR');
+  if (strRequireCAR !== 'Y') return;
+
+  // CAR Date = today  (YYYY-MM-DD for SQL Server)
+  const now = new Date();
+  const strCARDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const strCARYear = String(now.getFullYear());
+
+  // Policy fields
+  let CARStatus = '';
+  let strCARSource = '';
+  try {
+    const polRs = await executeSQLAsync(`SELECT HSEOBSRVTN_GnrCrStt, HSEOBSRVTN_CrBss FROM HSE_HSEOBSRVTN`);
+    const polRow = polRs?.recordset?.[0] ?? polRs?.[0];
+    if (polRow) {
+      CARStatus = (polRow.HSEOBSRVTN_GnrCrStt ?? polRow.hseobsrvtn_gnrcrstt ?? '').toString().trim();
+      strCARSource = (polRow.HSEOBSRVTN_CrBss ?? polRow.hseobsrvtn_crbss ?? '').toString().trim();
+    }
+  } catch (_) { /* policy not found – use defaults */ }
+  if (CARStatus.length < 2) CARStatus = CARStatus.padStart(2, '0');
+
+  // Owner department from policy
+  let strOwnerDept = '';
+  try {
+    const deptRs = await executeSQLAsync(`SELECT HSEPLC_OWNRDPRT FROM HSE_HSEPLC`);
+    const deptRow = deptRs?.recordset?.[0] ?? deptRs?.[0];
+    strOwnerDept = (deptRow?.HSEPLC_OWNRDPRT ?? deptRow?.hseplc_ownrdprt ?? '').toString().trim();
+  } catch (_) {}
+
+  // Employee (login user employee code – already resolved earlier in handleCloseButton's caller)
+  // RQ_HSE_12_4_26_00_40 — align login columns with CAR_Entry / getEmployeeCodeForLoginUser (USRID, LOGINNAME, USERID)
+  let strEmployee = '';
+  const escLogin = esc(userName);
+  for (const col of ['EMPLOYEE_USRID', 'EMPLOYEE_LOGINNAME', 'EMPLOYEE_USERID']) {
+    try {
+      const empRs = await executeSQLAsync(
+        `SELECT TOP 1 EMPLOYEE_NO FROM CMN_EMPLOYEE WHERE ${col} = '${escLogin}'`
+      );
+      const empRow = empRs?.recordset?.[0] ?? empRs?.[0];
+      const no = (empRow?.EMPLOYEE_NO ?? empRow?.employee_no ?? '').toString().trim();
+      if (no) {
+        strEmployee = no;
+        break;
+      }
+    } catch (_) {
+      /* try next column */
+    }
+  }
+
+  // Observation fields
+  const strNCDescription = readField('NRSTMISCENT_NRSTMISCDESC');
+  const strEvidence = readField('NRSTMISCENT_SFTYOBSRV');
+  const strSite = readField('NRSTMISCENT_SIT');
+  const strLocation = readField('NRSTMISCENT_LOCTYP');
+  const strArea = readField('NRSTMISCENT_WRKLOC');
+  const strConcernedDepartment = readField('NRSTMISCENT_CNCRNDDEP');
+  const strProject = readField('NRSTMISCENT_PRJCT');
+  const strTXNYear = readField('NRSTMISCENT_YR');
+  const strTXNNo = readField('NRSTMISCENT_NO');
+
+  // RQ_HSE_12_4_26_00_40 — GAP-5: ##TEMP_HSE_TABLE + INSERT in one batch per attempt (not separate round-trips)
+
+  const cols = `CRENTRY_CRDT,CRENTRY_CRYR,CRENTRY_CRN,CRENTRY_CRSTT,CRENTRY_DPR,CRENTRY_NM,CRENTRY_NCDSC,CRENTRY_EVD,CRENTRY_CRPRR,CRENTRY_ST,CRENTRY_LCT,CRENTRY_AR,CRENTRY_CNCDPR,CRENTRY_ATGNR,CRENTRY_CRSRC,CRENTRY_CRSRLN,CRENTRY_TXNYR,CRENTRY_TXNN${strProject ? ',CRENTRY_PRJ' : ''}`;
+
+  /** RQ_HSE_12_4_26_00_40 — allocation + INSERT are separate HTTP calls; retry on duplicate (year, CRN) / unique violations */
+  const isDupKeyErr = (e) => {
+    const m = String(e?.message ?? e ?? '').toLowerCase();
+    return (
+      m.includes('2627') ||
+      m.includes('2601') ||
+      m.includes('duplicate') ||
+      m.includes('unique constraint')
+    );
+  };
+
+  let strCARNo = '1';
+  let insertErr = null;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    strCARNo = await getNextAllocatedCrentryCrn(executeSQLAsync, strCARYear, undefined);
+    const strCARSerialNo = await getNextAllocatedCrentryCrsrln(
+      executeSQLAsync,
+      strCARYear,
+      strCARSource,
+      undefined
+    );
+    const vals = `'${esc(strCARDate)}','${esc(strCARYear)}','${esc(strCARNo)}','${esc(CARStatus)}','${esc(strOwnerDept)}','${esc(strEmployee)}','${esc(strNCDescription)}','${esc(strEvidence)}','m','${esc(strSite)}','${esc(strLocation)}','${esc(strArea)}','${esc(strConcernedDepartment)}','Y','${esc(strCARSource)}','${esc(strCARSerialNo)}','${esc(strTXNYear)}','${esc(strTXNNo)}'${strProject ? `,'${esc(strProject)}'` : ''}`;
+    try {
+      const ctxBatch = buildCrentryTriggerContextBatchSql(userName, 'Observation Approval', 'Creating new CAR');
+      await executeSQLAsync(`${ctxBatch}INSERT INTO HSE_CRENTRY (${cols}) VALUES (${vals})`);
+      insertErr = null;
+      break;
+    } catch (e) {
+      insertErr = e;
+      if (!isDupKeyErr(e)) {
+        console.error('[Web_HSE] RQ_HSE_12_4_26_00_40 generateCARFromObservation INSERT:', e);
+        throw e;
+      }
+    }
+  }
+  if (insertErr) {
+    console.error('[Web_HSE] RQ_HSE_12_4_26_00_40 CAR INSERT exhausted retries', insertErr);
+    throw insertErr;
+  }
+
+  toast.success(`CAR is generated with CAR No. = ${strCARYear}-${strCARNo}`);
+
+  // RQ_HSE_12_4_26_00_40 — GAP-6: PrmKy SELECT retries (pool/replication lag); then CopyImages with prominent failure notice
+  const strPicture = readField('NRSTMISCENT_NRSTMISCNUM') || obsKeyFieldValue;
+  const prmKySql = `SELECT PrmKy FROM HSE_CRENTRY WHERE CRENTRY_CRDT='${esc(strCARDate)}' AND CRENTRY_CRYR='${esc(strCARYear)}' AND CRENTRY_CRN='${esc(strCARNo)}'`;
+  const prmKyDelaysMs = [0, 200, 500];
+  let strPrmKy = '';
+  let lastPrmKyErr = null;
+  for (let attempt = 0; attempt < prmKyDelaysMs.length; attempt++) {
+    if (prmKyDelaysMs[attempt] > 0) {
+      await sleepMs(prmKyDelaysMs[attempt]);
+    }
+    try {
+      const prmRs = await executeSQLAsync(prmKySql);
+      const prmRow = prmRs?.recordset?.[0] ?? prmRs?.[0];
+      const pk = (prmRow?.PrmKy ?? prmRow?.prmky ?? prmRow?.PRMKY ?? '').toString().trim();
+      if (pk) {
+        strPrmKy = pk;
+        break;
+      }
+    } catch (selErr) {
+      lastPrmKyErr = selErr;
+      console.error('[Web_HSE] RQ_HSE_12_4_26_00_40 GAP-6 PrmKy SELECT after observation CAR INSERT:', selErr);
+    }
+  }
+
+  if (!strPrmKy) {
+    const detail = lastPrmKyErr
+      ? `CAR was created but the new record key could not be read after retries (${lastPrmKyErr?.message || String(lastPrmKyErr)}). Observation photos were not copied.`
+      : 'CAR was created but its primary key was not found for image copy (empty result after retries).';
+    notifyObservationCarImageGap6(notify, detail);
+  } else {
+    try {
+      await executeSQLAsync(
+        `EXEC CopyImages 'HSEMS','HSE_VWNRSTMISCENT','NRSTMISCENT_NRSTMISCNUM','${esc(strPicture)}','NRSTMISCENT_OBSRVTNIMG','HSE_CRENTRY','PrmKy','${esc(strPrmKy)}','CRENTRY_NCPHT'`
+      );
+    } catch (imgErr) {
+      console.error('[Web_HSE] RQ_HSE_12_4_26_00_40 GAP-6 CopyImages after observation CAR:', imgErr);
+      notifyObservationCarImageGap6(
+        notify,
+        `CopyImages failed for CAR ${strCARYear}-${strCARNo}: ${imgErr?.message || String(imgErr)}`
+      );
+    }
+  }
+}
+
+/**
+ * Handle Close button click (Observation Approval / Follow-up).
+ * BUG_HSE_HSM_14_3_26: Desktop parity – validations and actions per Observation_Approval_Close_Button_Desktop_Behavior.md
  * (RQ_HSM_22_12_11_28) Handle Close Custom Button
- * Implements the logic from NearMissFollowUpCategory::DisplayCustomButtonClicked for NRSTMISCENT_CLS
- * C++ Reference: NearMissFollowUpCategory::DisplayCustomButtonClicked (lines 43-270)
+ * Implements NearMissFollowUpCategory::DisplayCustomButtonClicked for NRSTMISCENT_CLS
+ * C++ Reference: NearMissFollowUpCategory.cpp DisplayCustomButtonClicked (lines 43-270)
  * @param {string} buttonName - The button name
  * @param {string} screenTag - The screen tag
  * @param {Object} eventObj - The full event object
  * @param {Object} devInterface - Object containing devInterface functions
  */
 export async function handleCloseButton(buttonName, screenTag, eventObj, devInterface) {
-  // (RQ_HSM_22_12_11_28) Handle Close Custom Button
+  // BUG_HSE_HSM_14_3_26: Close button – desktop behaviour (save first, key/employee checks, closeNearMissTXN, refresh)
   try {
     const {
       FormGetField,
@@ -969,9 +1284,10 @@ export async function handleCloseButton(buttonName, screenTag, eventObj, devInte
       getUserName,
       refreshData,
       doToolbarAction,
+      getEmployeeCodeForLoginUser,
+      AskYesNoMessage,
     } = devInterface;
 
-    // Validate required functions
     if (
       !FormGetField ||
       (!executeSQL && !executeSQLPromise) ||
@@ -987,15 +1303,12 @@ export async function handleCloseButton(buttonName, screenTag, eventObj, devInte
     const executeSQLAsync = executeSQLPromise || executeSQL;
     const formTag = screenTag || 'HSE_TGNRSTMISCFLWUP';
 
-    // C++: DoToolBarAction(TOOLBAR_SAVE, pCustomButtonClicked->Form_Tag, "");
-    // Save the record first before closing
+    // BUG_HSE_HSM_14_3_26: C++ DoToolBarAction(TOOLBAR_SAVE, Form_Tag, "") – save (validation + persist) before close logic
     doToolbarAction('SAVE', formTag, '');
 
-    // Extract event data
     const { fullRecord: fullRecordArr, fullRecordArrKeys } = eventObj || {};
 
-    // Get key field value (Observation number)
-    // C++: CString KeyFieldValue = GetKeyField(strFormTag, pCustomButtonClicked->pMultiSelectedRows);
+    // BUG_HSE_HSM_14_3_26: C++ KeyFieldValue = GetKeyField(strFormTag, pMultiSelectedRows)
     let keyFieldValue = '';
     if (fullRecordArrKeys && fullRecordArrKeys.length > 0) {
       keyFieldValue = fullRecordArrKeys[0].toString();
@@ -1007,36 +1320,46 @@ export async function handleCloseButton(buttonName, screenTag, eventObj, devInte
         '';
     }
 
-    // Fallback: read from form if still empty
     if (!keyFieldValue) {
       try {
-        keyFieldValue = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM') || '';
+        keyFieldValue = FormGetField('HSE_vwNRSTMISCENT', 'NRSTMISCENT_NRSTMISCNUM', 'SCR') || '';
       } catch (e) {
-        // Ignore error, try next option
+        // ignore
       }
       if (!keyFieldValue) {
         try {
-          keyFieldValue = FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM') || '';
+          keyFieldValue = FormGetField(formTag, 'NRSTMISCENT_NRSTMISCNUM', 'SCR') || '';
         } catch (e) {
-          // Ignore error
+          // ignore
         }
       }
     }
 
+    // BUG_HSE_HSM_14_3_26: C++ if KeyFieldValue empty: only RefreshScreen (no closeNearMissTXN)
     if (!keyFieldValue) {
       toast.warning('Unable to find Observation number. Please select a record first.');
+      refreshData('', 'REFRESH_SELECTED');
       return;
     }
 
-    // C++: CString strEmployeeName = GetEmployeeCodeForLoginUser();
-    // C++: if(strEmployeeName != "")
-    // Note: In C++, it checks for employee name, but we'll proceed with the close operation
-    // The stored procedure may handle employee validation internally
+    // GAP R4: C++ requires resolved employee for close; fail loudly instead of silent refresh-only path
+    if (typeof getEmployeeCodeForLoginUser !== 'function') {
+      toast.error(
+        'Employee lookup is not available for this session. Observation cannot be closed until the host wires getEmployeeCodeForLoginUser.'
+      );
+      return;
+    }
+    const employeeCode = await getEmployeeCodeForLoginUser();
+    const emp = employeeCode != null && String(employeeCode).trim() !== '' ? String(employeeCode).trim() : '';
+    if (emp === '') {
+      toast.error(
+        'Your login is not linked to an employee record. Close cannot proceed. Contact HR or system support.'
+      );
+      refreshData('', 'REFRESH_SELECTED');
+      return;
+    }
 
-    // Get screen name based on form tag
-    // C++:
-    //   if (strForm_Tag=="HSE_TGNRSTMISCCNFRMTN") strScreenName="Observation Review";
-    //   else if (strForm_Tag=="HSE_TGNRSTMISCFLWUP") strScreenName="Observation Approval";
+    // BUG_HSE_HSM_14_3_26: C++ strSourceScreenName = GetScrCptnByTag(66, strFormTag, "") – use caption for tracing
     let screenName = '';
     const normalizedFormTag = formTag.toUpperCase();
     if (normalizedFormTag === 'HSE_TGNRSTMISCCNFRMTN' || normalizedFormTag.includes('CNFRMTN')) {
@@ -1046,81 +1369,28 @@ export async function handleCloseButton(buttonName, screenTag, eventObj, devInte
     } else if (normalizedFormTag === 'HSE_TGNRMISRWARD' || normalizedFormTag.includes('RWARD')) {
       screenName = 'Observation Reward';
     } else {
-      screenName = 'Observation Entry'; // Default fallback
+      screenName = 'Observation Entry';
     }
-
-    // C++: CString strSourceScreenName = GetScrCptnByTag(66, strFormTag, "");
-    // C++: CString strUserName = GetUserLogin();
-    // C++: strSQL.Format("EXECUTE closeNearMissTXN '%s','%s','%s'", KeyFieldValue, strUserName, strSourceScreenName);
-    const sourceScreenName = screenName; // Use screen name (caption) as source screen name
+    const sourceScreenName = getScreenCaption(formTag) || screenName;
     const userName = getUserName() || '';
-    const spSql = `EXECUTE closeNearMissTXN '${keyFieldValue.toString().replace(/'/g, "''")}','${userName.replace(/'/g, "''")}','${sourceScreenName.replace(/'/g, "''")}'`;
 
-    console.log('[Web_HSE] Executing closeNearMissTXN stored procedure:', {
-      observationNumber: keyFieldValue,
-      userName: userName,
-      sourceScreenName: sourceScreenName,
-    });
+    const spSql = `EXECUTE closeNearMissTXN '${keyFieldValue.toString().replace(/'/g, "''")}','${userName.replace(/'/g, "''")}','${sourceScreenName.replace(/'/g, "''")}'`;
 
     try {
       await executeSQLAsync(spSql);
-      
-      // C++: InsertActionRecordIntoTracingTab("NRSTMISCENT","NRSTMISCNUM",CLOSED);
-      // C++: CLOSED maps to "Closed" action description
-      // Similar to Cancel button, we need to insert a tracing record manually
-      // C++: strSQL.Format("insert into HSE_NRSTMISCENTTRC (NRSTMISCENTTRC_DATTIM,NRSTMISCENTTRC_ACCDESC,NRSTMISCENTTRC_LNK,NRSTMISCENTTRC_ENTUSR,SRCSCRN) values (getdate(),'Closed',%s,'%s','%s')",linkFieldVal,strUserName,strScreenName);
-      const linkFieldVal = keyFieldValue;
-      const linkFieldValNum = typeof linkFieldVal === 'string' ? linkFieldVal.replace(/['"]/g, '') : linkFieldVal;
-      const insertTracingSql = `INSERT INTO HSE_NRSTMISCENTTRC (NRSTMISCENTTRC_DATTIM,NRSTMISCENTTRC_ACCDESC,NRSTMISCENTTRC_LNK,NRSTMISCENTTRC_ENTUSR,SRCSCRN) VALUES (getdate(),'Closed',${linkFieldValNum},'${userName.replace(/'/g, "''")}','${screenName.replace(/'/g, "''")}')`;
 
-      console.log('[Web_HSE] Inserting Close tracing record with SQL:', insertTracingSql);
-      
+      // RQ_HSE_13_3_26_1_43: C++ CAR auto-generation – client-side INSERT after closeNearMissTXN
+      // C++ ref: NearMissFollowUpCategory.cpp lines 69-205
       try {
-        await executeSQLAsync(insertTracingSql);
-        console.log('[Web_HSE] ✓ Tracing record inserted for closed observation');
-        
-        // Verify the tracing record was inserted
-        const verifyClosedSql = `SELECT TOP 1 NRSTMISCENTTRC_ACCDESC, NRSTMISCENTTRC_DATTIM 
-                                FROM HSE_NRSTMISCENTTRC 
-                                WHERE NRSTMISCENTTRC_LNK = ${linkFieldValNum} 
-                                AND NRSTMISCENTTRC_ACCDESC = 'Closed' 
-                                ORDER BY NRSTMISCENTTRC_DATTIM DESC`;
-        const verifyResult = await executeSQLAsync(verifyClosedSql);
-        const closedExists = verifyResult?.recordsets?.[0]?.length > 0 || verifyResult?.length > 0;
-        console.log('[Web_HSE] Verification - "Closed" tracing record exists:', closedExists);
-        
-      } catch (tracingError) {
-        console.warn('[Web_HSE] Error inserting tracing record (continuing anyway):', tracingError);
-        // Continue even if tracing record insertion fails
+        await generateCARFromObservation(formTag, keyFieldValue, executeSQLAsync, FormGetField, userName, {
+          AskYesNoMessage,
+        });
+      } catch (carErr) {
+        console.error('[Web_HSE] Error in CAR auto-generation (observation still closed):', carErr);
       }
-      
-      // C++: RefreshScreen("", REFRESH_SELECTED);
-      // Refresh immediately
+
       refreshData('', 'REFRESH_SELECTED');
-      
-      // Additional refreshes with delays to ensure tracing tab loads in all screens
-      // This helps ensure the tracing record is visible in both Approval and Reward screens
-      setTimeout(() => {
-        refreshData('', 'REFRESH_SELECTED');
-        console.log('[Web_HSE] First delayed refresh for tracing tab');
-      }, 500);
-      
-      setTimeout(() => {
-        refreshData('', 'REFRESH_SELECTED');
-        console.log('[Web_HSE] Second delayed refresh for tracing tab');
-      }, 1500);
-      
-      setTimeout(() => {
-        refreshData('', 'REFRESH_SELECTED');
-        console.log('[Web_HSE] Third delayed refresh for tracing tab (ensures visibility in Reward screen)');
-      }, 2500);
-      
       toast.success('Observation closed successfully');
-      
-      // Note: CAR creation logic (if NRSTMISCENT_RQRCR == "Y") is handled by the stored procedure
-      // The C++ code has extensive CAR creation logic, but it's likely moved to the stored procedure
-      // as indicated by the comment "Commented_Code Moved to DB to check original code"
-      
     } catch (error) {
       console.error('[Web_HSE] Error executing closeNearMissTXN:', error);
       toast.error('Error closing observation. Please try again.');
@@ -1135,7 +1405,7 @@ export async function handleCloseButton(buttonName, screenTag, eventObj, devInte
  * Handle Reject Reason screen OK button click
  * C++: CRejectReason::RejectReasonOk() - sets gbUpdateRejectedRecord = true
  * This is called when RJCTRSN_BTN_OK is clicked in the reject reason screen
- * Supports: Observation (rejectObservation), PTW (rejectPTW), Incident (rejectIncident), Risk (rejectRiskAssessment), Vehicle Accident (updateTXNSts status 3)
+ * Supports: Observation (rejectObservation), PTW (rejectPTW), Incident (rejectIncident), Risk (rejectRiskAssessment), Site Survey (rejectSitSrvy), Vehicle Accident (updateTXNSts status 3), Awareness (AwrnsPlnRejected), Rescue Plan cancel (cancelRscuPlan) — RQ_HSE_23_3_26_15_42, RQ_HSE_23_3_26_17_05, RQ_HSE_23_3_26_22_44
  * RQ_HSM_22_12_10_50: Handle Reject Custom Button
  * @param {Object} devInterface - Object containing devInterface functions
  */
@@ -1149,7 +1419,22 @@ export async function handleRejectReasonOkButton(devInterface) {
     const { moduleType, keyFieldValue, formTag, getUserName, executeSQLAsync, refreshData, toast } = pendingRejectObservation;
     const getU = typeof getUserName === 'function' ? getUserName : (devInterface?.getUserName || (() => ''));
     const userName = (getU() || '').toString().replace(/'/g, "''");
-    const sourceScreenName = (formTag || pendingRejectObservation.sourceScreenName || '').toString().replace(/'/g, "''");
+    // BUG_HSE_HSM_14_3_26_17_33: tracing tab Source Screen must be caption not form tag (desktop uses GetScrCptnByTag). Resolve caption here so it is always used.
+    let sourceScreenName = (pendingRejectObservation.sourceScreenName || formTag || '').toString();
+    const isObservation = !moduleType || moduleType === 'OBSERVATION';
+    if (isObservation && formTag && (sourceScreenName.startsWith('HSE_TG') || sourceScreenName === formTag)) {
+      sourceScreenName = getScreenCaption(formTag) || sourceScreenName;
+    }
+    // RQ_HSE_23_3_26_3_36 — Incident / PTW / Risk: if pending stored screen tag, resolve caption for rejectIncident etc.
+    // RQ_HSE_23_3_26_15_42 — Awareness Plan Approval caption for tracing
+    if (
+      ['INCIDENT', 'PTW', 'RISK', 'SITE_SURVEY', 'AWARENESS', 'RESCUE_CANCEL'].includes(moduleType) &&
+      formTag &&
+      (String(formTag).startsWith('HSE_TG') || String(formTag).startsWith('HSE_Tg'))
+    ) {
+      sourceScreenName = getScreenCaption(formTag) || sourceScreenName;
+    }
+    sourceScreenName = sourceScreenName.replace(/'/g, "''");
     const key = keyFieldValue.toString().replace(/'/g, "''");
     const refresh = typeof refreshData === 'function' ? refreshData : devInterface?.refreshData;
     const toastFn = toast || devInterface?.toast;
@@ -1171,6 +1456,11 @@ export async function handleRejectReasonOkButton(devInterface) {
         spSql = `EXECUTE rejectRiskAssessment '${key}','${sourceScreenName}','${userName}'`;
         successMsg = `Risk assessment ${keyFieldValue} rejected successfully`;
         break;
+      // RQ_HSE_23_3_26_22_44 — same argument order as desktop rejectSitSrvy(Key, SourceScreenCaption, User)
+      case 'SITE_SURVEY':
+        spSql = `EXECUTE rejectSitSrvy '${key}','${sourceScreenName}','${userName}'`;
+        successMsg = `Site survey ${keyFieldValue} rejected successfully`;
+        break;
       case 'VEHICLE_ACCIDENT':
         spSql = `EXECUTE updateTXNSts '${key}','3','VCLACDNTENT','VCLACDNTENT_VCLACDNTNO'`;
         successMsg = `Vehicle accident ${keyFieldValue} rejected successfully`;
@@ -1183,6 +1473,31 @@ export async function handleRejectReasonOkButton(devInterface) {
         spSql = `EXECUTE updateTXNSts '${key}','3','LOSSACDNTENT','LOSSACDNTENT_ACTHZRDNO'`;
         successMsg = `Loss accident ${keyFieldValue} rejected successfully`;
         break;
+      // RQ_HSE_23_3_26_15_42: reason text captured in HSE_RJCTRSN via reject reason screen; SP second arg empty string (desktop passes dialog text)
+      case 'AWARENESS':
+        spSql = `EXECUTE AwrnsPlnRejected ${key},''`;
+        successMsg = `Awareness plan ${keyFieldValue} rejected successfully`;
+        break;
+      // RQ_HSE_23_3_26_17_05: OpenReasonsScr parity — verify at least one reason row exists before cancel (desktop: OpenReasonsScr returns false if COUNT=0)
+      case 'RESCUE_CANCEL': {
+        const rsnCountSql = `SELECT COUNT(0) AS CNT FROM HSE_RJCTRSN WHERE RJCTRSN_MODULETYPE = 'RSCUPLN-L1' AND RJCTRSN_LINKWITHMAIN = '${key}' AND ISNULL(RJCTRSN_TRACINGLNK, 0) = 0`;
+        try {
+          const rsnData = await executeSQLAsync(rsnCountSql);
+          const rsnRow = rsnData?.recordset?.[0] ?? rsnData?.[0]?.recordset?.[0] ?? rsnData?.[0];
+          const rsnCnt = parseInt(rsnRow?.CNT ?? rsnRow?.cnt ?? Object.values(rsnRow || {})[0], 10) || 0;
+          if (rsnCnt === 0) {
+            console.warn('[Web_HSE] cancelRscuPlan aborted — no reason rows in HSE_RJCTRSN (desktop OpenReasonsScr would return false)');
+            if (toastFn && toastFn.warning) toastFn.warning('Cancel aborted — no cancel reason entered.');
+            clearPendingRejectObservation();
+            return;
+          }
+        } catch (cntErr) {
+          console.warn('[Web_HSE] cancelRscuPlan reason count check failed, proceeding:', cntErr);
+        }
+        spSql = `EXECUTE cancelRscuPlan '${key}',''`;
+        successMsg = `Rescue plan ${keyFieldValue} cancelled successfully`;
+        break;
+      }
       case 'OBSERVATION':
       default:
         spSql = `EXECUTE rejectObservation '${key}','${sourceScreenName}','${userName}'`;

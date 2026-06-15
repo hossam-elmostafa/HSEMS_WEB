@@ -11,7 +11,55 @@
  * - NearMissEntryCategory::DisplayRecordRepostion (tab enabling)
  * - NearMissEntryCategory::isObservationTabsEnabled (check if tabs should be enabled)
  * - CHSEMSCommonCategory::manageCommentsTabToolBar (Comments tab management)
+ *
+ * RQ_HSE_5_4_26_14_19 — Comments tab SRCSCRN = getScreenCaption (tracing parity); applyObservationCommentsSourceScreen.
  */
+
+// RQ_HSE_5_4_26_14_19
+import { getScreenCaption } from '../ModuleButtonHandlers/moduleButtonHandlersUtils.js';
+import { OBSERVATION_SCREEN_TAGS } from '../../config/constants.js';
+
+// RQ_HSE_5_4_26_14_19
+const COMMENTS_DB_TABLE = 'HSE_NERMSCMNTS';
+const COMMENTS_SRC_FIELD = 'SRCSCRN';
+
+/**
+ * Main header screen is Observation workflow (same family as buttonEvents observation branch).
+ * @param {string} mainFormTag
+ */
+export function isObservationWorkflowCommentsScreen(mainFormTag) {
+  if (!mainFormTag) return false;
+  const strScrTag = String(mainFormTag).toUpperCase();
+  return (
+    OBSERVATION_SCREEN_TAGS.some((tag) => strScrTag.includes(String(tag).toUpperCase())) ||
+    strScrTag.includes('NRSTMISC') ||
+    strScrTag.includes('NERMSENT')
+  );
+}
+
+/**
+ * Comments tab SRCSCRN: override JSON default "Near Miss Entry" with GetScrCptnByTag-style caption (tracing parity).
+ * RQ_HSE_5_4_26_14_19
+ * @param {Object} devInterface - FormSetField
+ * @param {string} formTag - Main screen tag
+ * @param {string} subFormTag - Comments subform tag (contains CMNTS)
+ * @param {Record<string, unknown>|undefined} fullRecord - optional save payload merge
+ */
+export function applyObservationCommentsSourceScreen(devInterface, formTag, subFormTag, fullRecord) {
+  // RQ_HSE_5_4_26_14_19
+  if (!subFormTag || !String(subFormTag).toUpperCase().includes('CMNTS')) return;
+  if (!isObservationWorkflowCommentsScreen(formTag)) return;
+  const { FormSetField } = devInterface || {};
+  if (typeof FormSetField !== 'function') return;
+  const caption = getScreenCaption(formTag);
+  if (!caption) return;
+  FormSetField(COMMENTS_DB_TABLE, COMMENTS_SRC_FIELD, caption, 'TAB');
+  if (fullRecord != null && typeof fullRecord === 'object') {
+    const upper = COMMENTS_SRC_FIELD.toUpperCase();
+    const existingKey = Object.keys(fullRecord).find((k) => k.toUpperCase() === upper);
+    fullRecord[existingKey || upper] = caption;
+  }
+}
 
 /**
  * Check if observation tabs should be enabled
@@ -25,11 +73,12 @@ export async function isObservationTabsEnabled(executeSQLAsync, getValFromRecord
     // C++: SELECT TOP 1 ISNULL(HSEOBSRVTN_LCKENTRYTABS,'') FROM HSE_HSEOBSRVTN
     const sql = "SELECT TOP 1 ISNULL(HSEOBSRVTN_LCKENTRYTABS,'') AS LCKENTRYTABS FROM HSE_HSEOBSRVTN";
     const result = await executeSQLAsync(sql);
-    
-    // Extract value from result
+
+    // GAP R2: WebInfra returns `{ recordset: [...] }`, not a top-level array — same extraction as handleConfirmButton
+    const recordset = result?.recordset || result?.[0]?.recordset || (Array.isArray(result) ? result : []);
     let observationTabsLocked = '';
-    if (result && result.length > 0) {
-      const row = result[0];
+    if (recordset.length > 0) {
+      const row = recordset[0];
       observationTabsLocked = (row.LCKENTRYTABS || row.lckentrytabs || Object.values(row)[0] || '').toString().toUpperCase();
     }
     
@@ -141,7 +190,7 @@ export async function manageCommentsTabToolBar(formTag, subFormTag, devInterface
     const tableName = getTrueTableName(formTag, subFormTag);
 
     // C++: CString strFlag = FormGetField(strTableName, "FLAG");
-    const strFlag = FormGetField(tableName, 'FLAG') || '';
+    const strFlag = FormGetField(tableName, 'FLAG', 'TAB') || '';
 
     if (strFlag === '1') {
       // C++: disableCmntTabFields(strSubFormTag);
@@ -151,7 +200,7 @@ export async function manageCommentsTabToolBar(formTag, subFormTag, devInterface
     } else if (strFlag === '0') {
       // C++: CString strCommentedBy = FormGetField(strTableName, "CMNTDNEBY");
       // C++: CString userName = GetUserLogin();
-      const strCommentedBy = FormGetField(tableName, 'CMNTDNEBY') || '';
+      const strCommentedBy = FormGetField(tableName, 'CMNTDNEBY', 'TAB') || '';
       const userName = getUserName() || '';
 
       // C++: if(strCommentedBy.Compare(userName) == 0)
@@ -172,7 +221,8 @@ export async function manageCommentsTabToolBar(formTag, subFormTag, devInterface
       // C++: setCmntScreenSource(strFormTag, strSubFormTag, strTableName);
       enableCmntTabFields(subFormTag, changeFldAttrb);
       enableCmntTabToolBar(formTag, subFormTag, setScreenDisableBtn);
-      // Note: setCmntScreenSource is commented out in C++ code, so we skip it
+      // RQ_HSE_5_4_26_14_19
+      applyObservationCommentsSourceScreen(devInterface, formTag, subFormTag, undefined);
     }
   } catch (error) {
     console.error('[Web_HSE] Error managing Comments tab toolbar:', error);

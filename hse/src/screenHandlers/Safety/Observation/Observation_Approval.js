@@ -2,6 +2,8 @@
  * Screen handler: Observation Approval (HSE_TgNrstMiscflwup)
  * Menu path: Safety -> Observation -> Observation Approval (from HSE.json)
  * Delegates custom buttons to ObservationService and runs observation tab logic for toolbar events.
+ * BUG_HSE_HSM_14_3_26: Custom Close (NRSTMISCENT_CLS) handled in ObservationService.handleCloseButton with desktop parity.
+ * RQ_HSE_5_4_26_14_19 — Comments tab Source Screen = getScreenCaption.
  */
 
 import {
@@ -9,6 +11,8 @@ import {
   isObservationTabsEnabled,
   manageObservationTabs,
   manageCommentsTabToolBar,
+  // RQ_HSE_5_4_26_14_19
+  applyObservationCommentsSourceScreen,
 } from '../../../services/Observation service/ObservationService.js';
 import { mapUnknownFieldTypes } from '../../../utils/fieldTypeMapper.js';
 import { setNextSerialOnNewTab } from '../../../utils/tabNewSerialUtils.js';
@@ -42,6 +46,7 @@ const TAB_NEW_SERIAL_CONFIG = {
 };
 
 export function ButtonClicked(eventObj) {
+  // BUG_HSE_HSM_14_3_26: Close (NRSTMISCENT_CLS) routed to handleCloseButton in ObservationService
   const { Button_Name, strScrTag } = eventObj || {};
   const devInterface = eventObj.devInterfaceObj || {};
   const buttonName = Button_Name ? Button_Name.toString().toUpperCase() : '';
@@ -55,6 +60,24 @@ export async function toolBarButtonClicked(eventObj, callBackFn) {
   const strTabTag = (eventObj.strTabTag && eventObj.strTabTag.toString().toUpperCase()) || '';
   const strBtnName = (eventObj.strBtnName && eventObj.strBtnName.toString().toUpperCase()) || '';
   const complete = eventObj.complete;
+  const completeStr = complete == null ? '' : String(complete).trim();
+  const isPostPhase = complete === 1 || completeStr === '1';
+  const isPrePhase =
+    !isPostPhase &&
+    (complete == null ||
+      complete === '' ||
+      complete === 0 ||
+      complete === false ||
+      completeStr === '0');
+
+  // RQ_HSE_5_4_26_14_19
+  try {
+    if (strBtnName === 'SAVE' && isPrePhase && strTabTag && strTabTag.includes('CMNTS') && eventObj.isNewMode) {
+      applyObservationCommentsSourceScreen(devInterface, strScrTag, strTabTag, eventObj?.fullRecord);
+    }
+  } catch (e) {
+    console.warn('[Web_HSE] Observation Approval SAVE pre Comments SRCSCRN:', e);
+  }
 
   try {
     if (strBtnName === 'NEW' && complete === 1 && strTabTag) {
@@ -81,6 +104,15 @@ export async function toolBarButtonClicked(eventObj, callBackFn) {
   }
 
   callBackFn(eventObj);
+
+  // RQ_HSE_5_4_26_14_19
+  try {
+    if (strBtnName === 'NEW' && isPostPhase && strTabTag && strTabTag.includes('CMNTS')) {
+      applyObservationCommentsSourceScreen(devInterface, strScrTag, strTabTag, undefined);
+    }
+  } catch (e) {
+    console.warn('[Web_HSE] Observation Approval post-callback Comments SRCSCRN:', e);
+  }
 }
 
 export async function ShowScreen(setScreenDisableBtn, strScrTag, strTabTag, devInterfaceObj) {
