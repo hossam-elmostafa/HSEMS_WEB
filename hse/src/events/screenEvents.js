@@ -32,30 +32,14 @@ export function SubFieldChanged(strScrTag, strTabTag, fieldName, oldFieldVal, fi
       cancel : 0
     }
     try {
-<<<<<<< HEAD
-      const screenHandler = getScreenHandler(strScrTag);
-      if (screenHandler && typeof screenHandler.SubFieldChanged === 'function') {
-        const handlerResult = await screenHandler.SubFieldChanged(
-          strScrTag,
-          strTabTag,
-          fieldName,
-          oldFieldVal,
-          fieldVal,
-          updatedAppGlobalVal,
-          devInterfaceObj
-        );
-        if (handlerResult && handlerResult.cancel) {
-          retObj.cancel = handlerResult.cancel;
-=======
       // RQ_HSE_23_3_26_18_00: delegate to screen handler (mirrors MainSubReposition / ShowScreen pattern)
       const screenHandler = getScreenHandler(strScrTag);
       if (screenHandler && typeof screenHandler.SubFieldChanged === 'function') {
         const result = await screenHandler.SubFieldChanged(
-          strScrTag, strTabTag, fieldName, oldFieldVal, fieldVal, devInterfaceObj
+          strScrTag, strTabTag, fieldName, oldFieldVal, fieldVal, updatedAppGlobalVal,devInterfaceObj
         );
         if (result && result.cancel) {
           retObj.cancel = result.cancel;
->>>>>>> 6153395649cda3b85e1ee04083fc6eddac0c8977
         }
       }
       resolve(retObj);
